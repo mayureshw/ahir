@@ -450,6 +450,8 @@ protected:
 public:
   vcCPBlock(vcCPBlock* parent, string id);
 
+  vector<vcCPElement*>& Get_Elements() { return _elements; }
+
   virtual void Set_Pipeline_Parent(vcCPBlock* cpb)
   {
 	  if(_pipeline_parent != NULL)
