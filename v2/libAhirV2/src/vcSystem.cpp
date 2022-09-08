@@ -230,6 +230,7 @@ void vcSystem::Add_Module(vcModule* module)
 {
   assert(this->_modules.find(module->Get_Id()) == this->_modules.end());
   this->_modules[module->Get_Id()] = module;
+  _ordered_modules.push_back(module);
 
   string mod_id = module->Get_Id();
   string lib_id;

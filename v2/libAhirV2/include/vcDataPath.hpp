@@ -356,6 +356,9 @@ protected:
   vcDataPipeline* _data_pipeline;
  public:
 
+  vector<vcWire*>& Get_Input_Wires() { return _input_wires; }
+  vector<vcWire*>& Get_Output_Wires() { return _output_wires; }
+
   vcDatapathElement(string id):vcRoot(id) 
 	{
 		_guard_wire = NULL; 
@@ -729,6 +732,8 @@ class vcDataPath: public vcRoot
   int _estimated_buffering_bits;
  public:
   vcDataPath(vcModule* m, string id);
+
+  map<string, vcDatapathElement*>& Get_DPE_Map() { return _dpe_map; }
 
   vcDataPipeline* Find_Or_Add_DataPipeline(string dpipeline);
   void Add_To_DataPipeline(string pname, string dpe_name);

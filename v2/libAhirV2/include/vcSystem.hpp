@@ -61,6 +61,7 @@ class vcSystem: public vcRoot
   map<string,vcPipe*> _pipe_map;
 
   map<string, pair<string,int> >  _function_library_module_map;
+  vector<vcModule*> _ordered_modules;
 
   // gated clocks -> enable
   map<string, string> _gated_clock_map;
@@ -100,6 +101,9 @@ class vcSystem: public vcRoot
 
   static int _fifo_register_count;
   static void Increment_Fifo_Register_Count(int S);
+
+  map<string, vcModule*>& Get_Modules() { return _modules; }
+  vector<vcModule*>& Get_Ordered_Modules() { return _ordered_modules; }
 
   void Register_Pipe_Read(string pipe_id, vcModule* m, int idx);
   int Get_Num_Pipe_Reads(string pipe_id);
