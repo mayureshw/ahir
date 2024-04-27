@@ -33,8 +33,8 @@
 package GlobalConstants is
     constant global_debug_flag: boolean := false;
     constant global_pipe_report_flag: boolean := true;
-    constant global_use_vivado_bbank_dual_port : boolean := false;
-    constant global_use_vivado_distributed_ram_queue : boolean := false;
+    constant global_use_vivado_bbank_dual_port : boolean := true;
+    constant global_use_vivado_distributed_ram_queue : boolean := true;
 
     -- clock gating using Xilinx IP?
     constant use_xilinx_bufce: boolean := true;
@@ -49,5 +49,11 @@ package GlobalConstants is
     -- this or deeper pipes with DPRAM.  Note: this is a hack!
     constant global_pipe_shallowness_threshold : integer := 10;  
 
+
+    -- use the optimized unload buffer implementation if possible.
+    -- this saves a substantial amount of logic, but  can result
+    -- in a slight (2.5%) performance reduction.  use it for the
+    -- minimizing resource usage.
+    constant global_use_optimized_unload_buffer : boolean := false;
 
 end package GlobalConstants;

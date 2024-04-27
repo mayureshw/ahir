@@ -487,6 +487,11 @@ class AaRecordType: public AaType
 	}
     }
 
+    bool Get_Is_Named() {return(_is_named);}
+
+    void Print_Group_Function   (ostream& ofile);
+    void Print_Ungroup_Function (ostream& ofile);
+
     void Print_Declaration(ostream& ofile)
     {
       if(_is_named)
@@ -578,9 +583,24 @@ class AaRecordType: public AaType
       ofile << "} " << C_Name() << ";" << endl;
     }
     
+    virtual unsigned int Get_Width();
     virtual AaType* Get_Element_Type(int start_idx, vector<AaExpression*>& indices);
     virtual int Get_Start_Bit_Offset(int start_index, vector<AaExpression*>& indices);
     int Get_Start_Bit_Offset(AaExpression* expr);
+
+    virtual bool Is_Single_Level_Record_Type()
+    {
+	bool ret_val = true;
+      	for(int idx = 0; idx < this->_element_types.size(); idx++)
+	{
+		if(!this->Get_Element_Type(idx)->Is_Scalar_Type())
+		{
+			ret_val = false;
+			break;
+		}
+	}
+	return(ret_val);
+    }
     
 };
 

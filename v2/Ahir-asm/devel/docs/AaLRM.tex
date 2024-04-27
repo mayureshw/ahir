@@ -821,12 +821,6 @@ in all descendent scopes.
 \item A reference to a variable $b$ in a scope X is resolved by checking
 whether the variable is defined in that scope, and if not found there,
 by checking in the scope that contains the scope X, and so on.
-\item A scope can read from variables that are defined in descendant
-scopes.  
-\item A scope can export a variable defined within its scope to
-its parent scope.   The name  of the exported variable must not
-clash with the name of any other variable visible in the
-parent scope.
 \item A scope can read from variables that are defined in ancestor scopes.
 \item A scope can only write to one of the following:
 \begin{itemize}
@@ -839,41 +833,10 @@ which writes to this output argument.
 \end{itemize}
 \end{enumerate}
 
-A variable reference in a statement may be specified 
-as follows
-\begin{verbatim}
-a            look for variable a in current scope; 
-             if not found look in the parent.
-
-:a           same as the previous case
-
-../:a        look for variable a starting from the parent of
-             the current scope.
-
-%p:a         look for variable a starting from the child scope 
-             with label p (child scope of the current scope).
-
-../../:a     look for variable starting from the parent of
-             the parent of the current scope.
-
-%p%q:a       look for variable starting from the child scope 
-             with label q of the child scope with label p of 
-             the current scope
-
-a[10]        look for a storage variable a defined in the 
-             current scope.  If not found, look for it in
-             the parent scope, and so on.  If eventually found, 
-             access the corresponding element of the composite
-             object.
-\end{verbatim}
-Thus, a generic variable reference has the form 
-\begin{verbatim} 
-    scope-reference : variable-reference 
-\end{verbatim} 
-and the scoping rules forbid a scope from accessing variables
-which are not defined in either an ancestor or a descendant
-of the scope (the export mechanism should be used if this
-is needed).
+If, from within a scope, we wish to read the value of
+a variable defined in a child scope, then the child scope
+must export the value of the variable so that the parent
+scope can access it.
 
 \section{Types} \label{sec:Types}
 
@@ -978,6 +941,45 @@ defines a record type with name myrec, one of whose
 fields is a pointer to myrec.
 \end{itemize}
 
+\subsection{The bit-level layout of a Record-type}
+
+Consider a record type:
+\begin{verbatim}
+$record [myrec] <$uint<8> >  < $uint<16> >
+\end{verbatim}
+which has an 8-bit field and a 16-bit field.  The
+record type when implemented in hardware will
+use 24 bits organized as follows
+\begin{verbatim}
+[23:8]                [7:0]
+second-field          first-field
+   16bit                8bit
+\end{verbatim}
+
+A cast from the record type to an integer type
+will be consistent with this bit layout.
+For example
+\begin{verbatim}
+// concatenate fields last-field to first-field.
+r := ($cast (myrec) ($concat u16 u8))
+
+//
+// The cast from the record gives the 
+// last field as the left-most.
+// w[23:8] will be field 2, 
+// w[7:0]  will be field 1.
+w := ($bitcast ($uint<24>) r) 
+\end{verbatim}
+
+Note that an assignment to an SSA variable
+with record type which writes only to
+a part of a record is not permitted.
+That is
+\begin{verbatim}
+r [0] := ....
+\end{verbatim}
+is not permitted if $r$ is an SSA variable
+with a record type.
 
 
 \section{Expressions} \label{sec:Expressions}
@@ -997,6 +999,7 @@ Expressions in \Aa fall into the following classes
 \item Binary expressions.
 \item Ternary expressions.
 \item Zero, One expressions.
+\item Funcion call expressions.
 \end{itemize}
 
 \subsection{Constant literal references} 
@@ -1391,6 +1394,28 @@ expands to
 ($bitcast ($uint<16>) 1)
 \end{verbatim}
 
+\subsection{Function call expressions}
+
+When a module is declared with only a single
+output argument, then it can be ``called'' in
+another way, using a function call expression.
+
+For example
+\begin{verbatim}
+$module [add8] $in (X Y: $uint<8>) 
+    $out(Z: $uint<8>)
+$is
+{
+  Y := (X + 1)
+}
+\end{verbatim}
+
+can be invoked in an expression as
+\begin{verbatim}
+P := ($call add8 (U V))
+\end{verbatim}
+for convenience.
+
 \section{Synthetic instructions}
 
 For convenience, there are some synthetic operations which
@@ -1687,7 +1712,7 @@ A volatile module cannot make any memory accesses or
 reads/writes to pipes.  Inside a volatile module, 
 a function call must be to volatile modules only.
 
-\subsection{Opaque Modules}
+\subsection{Opaque Modules} \label{sec:Opaque}
 
 The {\bf Aa} compiler normally looks inside module
 descriptions to identify load/store or pipe access
@@ -1785,6 +1810,58 @@ The \Aa compiler then considers that the module GetValue
 is defined ``elsewhere'' and does not try to link to it
 directly.  This linking is done outside by other tools which
 use the results of the \Aa compilation process.
+
+\section{Gated clocks}
+
+	Gated clocks can be declared and controlled within the Aa
+	language framework.   There are two control scenarios which
+	are supported.
+\begin{itemize}
+\item  Automatic mode:
+	   the gated clock can be attached to a module, and is
+	  enabled whenever the module is activated (by the
+	  start\_req/start\_ack pair), and disabled when the
+	  module is no longer active, i.e., it has no further
+	  jobs in progress inside it.
+\item Explicit mode:
+	   the gated clock enable signal is generated from within
+	   some logic described in Aa.
+\end{itemize}
+
+\subsection{Creating and using an explicitly controlled gated clock}
+
+	To create an explicit gated clock, we need to declare an enable signal
+	and a gated clock to which it is matched.  For example
+\begin{verbatim}
+// signal declaration of an enable.
+$pipe  data_1_clock_enable: $uint<1> $signal
+// gated clock attached to enable.
+$gated_clock  data_1_clock data_1_clock_enable
+\end{verbatim}
+
+	Now the declared gated clock can be applied to
+	a module foo by the statement
+\begin{verbatim}
+	$use_gated_clock foo  data_1_clock
+\end{verbatim}
+ 	It is the responsibility of the programmer
+	to control the enable signal (data\_1\_clock\_enable above).
+	This enable signal will control the gated clock data\_1\_clock
+	which is used by the module foo.
+
+
+\subsection{Declaring and using automatic gated clocks}
+
+	In this case, all we need to declare is that 
+	a module ``bar'' will run on a gated clock which
+	is enabled when the module is working on an active job
+	and disabled otherwise.  This is done by the
+	statement
+\begin{verbatim}
+$use_gated_clock bar
+\end{verbatim}
+
+
 
 \section{Examples}
 

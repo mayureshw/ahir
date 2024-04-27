@@ -277,6 +277,13 @@ void AaAssignmentStatement::Write_VC_Control_Path_Optimized(bool pipeline_flag,
 
 			__ConnectSplitProtocolPattern;
 
+			// barrier can hold up this statement.
+			if(barrier != NULL)
+			{
+				ofile << "// barrier dependency for statement " << endl;
+				__J (__SST(this), __UCT(barrier))
+			}
+
 			if(this->_guard_expression && !this->_guard_expression->Is_Constant())
 			{
 				ofile << "// Guard dependency" << endl;
@@ -546,6 +553,29 @@ void AaCallStatement::Write_VC_Control_Path_Optimized(bool pipeline_flag,
 					visited_elements.insert(root_obj);
 				}
 			}
+			else if(expr->Is_Store() || expr->Is_Pipe_Write())
+			{
+				// If the statement was volatile, then the output argument 
+				// expression sample should be triggered by all the input argument 
+				// expression update completes.
+				for(int jdx = 0; jdx < _input_args.size(); jdx++)
+				{
+
+					AaExpression* i_expr = _input_args[jdx];
+					if(!i_expr->Is_Constant()) 
+					{
+						i_expr->Write_Forward_Dependency_From_Roots(__SST(expr),
+								expr->Get_Index(),
+								visited_elements,
+								ofile);
+						if(pipeline_flag)
+						{
+							i_expr->Write_VC_Update_Reenables(this, __SCT(expr), true,
+									visited_elements, ofile);
+						}
+					}
+				}
+			}
 
 			//
 			// if expr is a interface-object in pipelined module, this kicks in
@@ -570,22 +600,8 @@ void AaCallStatement::Write_VC_Control_Path_Optimized(bool pipeline_flag,
 
 		// Pipe and memory space information into ls and pipe maps.
 		AaModule* cm = this->Get_Called_Module();
-		set<AaPipeObject*>  accessed_pipes;
-		cm->Get_Accessed_Pipes(accessed_pipes);
-		for(set<AaPipeObject*>::iterator iter = accessed_pipes.begin(), 
-			fiter = accessed_pipes.end(); iter != fiter; iter++)
-		{
-			pipe_map[*iter].push_back(this);
-		}
-
-		set<AaMemorySpace*> accessed_memory_spaces;
-		cm->Get_Accessed_Memory_Spaces(accessed_memory_spaces);
-		for(set<AaMemorySpace*>::iterator mter = accessed_memory_spaces.begin(), 
-			fmter = accessed_memory_spaces.end(); mter != fmter; mter++)
-		{
-			ls_map[*mter].push_back(this);
-		}
-
+		cm->Update_Pipe_Map (pipe_map, this);
+		cm->Update_Memory_Space_Map (ls_map, this);
 	}
 	ofile << "// end: " << this->To_String() << endl;
 }
@@ -657,6 +673,7 @@ void AaBlockStatement::Identify_Maximal_Sequences( AaStatementSequence* sseq,
 
 			if(stmt->Is("AaBarrierStatement"))
 			{
+				AaRoot::Info ("found $barrier statement on line " + IntToStr(stmt->Get_Line_Number()));
 				// barrier.. 
 				end_idx++;
 				break;
@@ -748,6 +765,68 @@ void AaBlockStatement::Write_VC_Control_Path_Optimized(bool pipeline_flag,
 		for(int idx = 0, fidx = sseq->Get_Statement_Count(); idx < fidx; idx++)
 		{
 			AaStatement* stmt = sseq->Get_Statement(idx);
+			
+			// If this is a barrier, handle it appropriately.
+			if(stmt->Is("AaBarrierStatement"))
+			{
+				ofile << "// Barrier in pipelined body " << endl;
+				// Here, we should ensure that 
+				// succeeding statements from this point on
+				// can execute only if all preceding statements 
+				// up to this point have completed execution.
+				// 
+				// There is a lower level mark/synch pair
+				// that gives individual predecessor->successor
+				// dependencies (with re-enables also).
+				//
+				__T(__UCT(stmt))	
+				if(idx > 0)
+				{
+					int jdx;
+					bool found_one = false;
+					for(jdx =  idx-1; jdx >= 0; jdx--)
+					{
+						AaStatement* pstmt = sseq->Get_Statement(jdx);
+						bool p_is_barrier = pstmt->Is("AaBarrierStatement");
+
+						if(!pstmt->Get_Is_Volatile() && 
+								!pstmt->Is_Null_Like_Statement())
+						// volatiles, nulls, reports ignored..
+						{
+							// ensure that barrier is triggered
+							// only after all preceding statements
+							// up to the previous barrier have completed.
+							__J(__UCT(stmt), __UCT(pstmt))
+							if(!p_is_barrier)
+								found_one = true;
+						}
+
+						if(p_is_barrier)
+						{
+							if(!found_one) 
+							{
+								ofile 
+									<< "// barrier to barrier dependency with delay" 
+									<< endl;
+
+								string delay_trans =
+									__UCT(pstmt) + "_to_" + __UCT(stmt) + "_delay";
+								__TD (delay_trans)
+								__J  (delay_trans, __UCT(pstmt))
+								__J  (__UCT(stmt), delay_trans)
+							}
+
+							break;
+						}
+					}
+				}
+
+				// continuing, with stmt as the barrier.
+				trailing_barrier = stmt;
+
+				//AaRoot::Error("in pipelined bodies, a $barrier is ignored", stmt);
+				//AaRoot::Info("in pipelined bodies, use the $mark/$synch construct instead.");
+			}
 
 			// skip null, report statements.
 			if(stmt->Is_Null_Like_Statement())
@@ -810,13 +889,27 @@ Write_VC_Load_Store_Dependencies(bool pipeline_flag,
 		for(int idx = 0, fidx = (*iter).second.size(); idx < fidx; idx++)
 		{
 			AaRoot* expr = (*iter).second[idx];
-			// expr can be call statement.
+
+			// expr can be call statement or function call expression.
+			bool is_fn_call_expr = expr->Is("AaFunctionCallExpression");
+			bool is_call_stmt = expr->Is_Call_Statement();
+
+			bool is_volatile_call = 
+				(is_call_stmt ?  
+				 ((AaCallStatement*)expr)->Get_Is_Volatile()
+				 : (is_fn_call_expr ? 
+					 ((AaFunctionCallExpression*)expr)->Get_Is_Volatile() : false));
+			bool is_opaque_call = 
+				(is_call_stmt ?  
+				 ((AaCallStatement*)expr)->Is_Opaque_Call_Statement()
+				 : (is_fn_call_expr ? 
+					 ((AaFunctionCallExpression*)expr)->Is_Opaque_Function_Call_Expression() : false));
+
 			if(expr->Is_Expression() ||
 					(!AaProgram::_treat_all_modules_as_opaque && 
-							expr->Is_Call_Statement() && 
-							// volatiles are ignored, as they should be
-							!(((AaCallStatement*)expr)->Get_Is_Volatile()) && 
-							!expr->Is_Opaque_Call_Statement()))
+					 	(is_fn_call_expr || is_call_stmt) && 
+					 	// volatiles and opaques are ignored, as they should be
+					 	!is_volatile_call && !is_opaque_call))
 			{
 				bool is_store = expr->Writes_To_Memory_Space(ms);
 				ofile << "//  " << expr->Get_VC_Name() <<  (is_store ? " store" : " load") << endl;
@@ -988,7 +1081,16 @@ Write_VC_Pipe_Dependencies(bool pipeline_flag, map<AaPipeObject*,vector<AaRoot*>
 					AaRoot* last = read_expr_vector[I];
 
 					ofile << "// ring dependency in pipeline." << endl;
-					__MJ(__UST(first_expr), __UCT(last),  true); // bypass.
+					if(first_expr->Is("AaFunctionCallExpression") ||
+						first_expr->Is("AaCallStatement"))
+					{
+						ofile << "// function call expression/statement ..." << endl;
+						__MJ(__SST(first_expr), __UCT(last),  true); // bypass.
+					}
+					else
+					{
+						__MJ(__UST(first_expr), __UCT(last),  true); // bypass.
+					}
 				}
 			}
 		}

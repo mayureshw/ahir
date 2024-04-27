@@ -525,6 +525,7 @@ protected:
   virtual bool Is_Float_To_Float_Operator() {return(false);}
 
   bool Is_Part_Of_Pipelined_Loop(int& depth, int& buffering);
+
   virtual bool Is_Part_Of_Pipeline()
   {
 	int B,D; 
@@ -532,6 +533,8 @@ protected:
 	return(ret_val);
   }
   int Get_Buffering();
+
+  virtual bool Is_Part_Of_Full_Rate_Pipeline ();
 
   int Get_Req_Index(vcTransition* t)
   {

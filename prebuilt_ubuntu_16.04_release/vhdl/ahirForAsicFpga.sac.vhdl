@@ -33,8 +33,11 @@
 package GlobalConstants is
     constant global_debug_flag: boolean := false;
     constant global_pipe_report_flag: boolean := true;
-    constant global_use_vivado_bbank_dual_port : boolean := false;
-    constant global_use_vivado_distributed_ram_queue : boolean := false;
+    constant global_use_vivado_bbank_dual_port : boolean := true;
+    constant global_use_vivado_distributed_ram_queue : boolean := true;
+
+    -- clock gating using Xilinx IP?
+    constant use_xilinx_bufce: boolean := true;
 
     --
     -- for guarded statements... increase this with care!
@@ -177,7 +180,10 @@ package Utilities is
 
   function Reverse(x: unsigned) return unsigned;
   procedure TruncateOrPad(signal rhs: in std_logic_vector; signal lhs : out std_logic_vector);
-  
+
+  function TieLowSlvConstant (constant W: integer) return std_logic_vector;
+  function TieHighSlvConstant (constant W: integer) return std_logic_vector;
+
 end Utilities;
 
 
@@ -505,6 +511,20 @@ package body Utilities is
 	alhs(L downto 1) <= arhs(L downto 1);
   end procedure TruncateOrPad;
 
+  function TieLowSlvConstant (constant W: integer) return std_logic_vector is
+	variable ret_var : std_logic_vector(1 to W) ;
+  begin
+	ret_var := (others => '0');
+	return(ret_var);
+  end TieLowSlvConstant;
+
+  function TieHighSlvConstant (constant W: integer) return std_logic_vector is
+	variable ret_var : std_logic_vector(1 to W) ;
+  begin
+	ret_var := (others => '1');
+	return(ret_var);
+  end TieHighSlvConstant;
+  
 end Utilities;
 ------------------------------------------------------------------------------------------------
 --
@@ -2443,6 +2463,21 @@ package BaseComponents is
   -----------------------------------------------------------------------------
   -- queue, fifo, lifo
   -----------------------------------------------------------------------------
+  component QueueBaseCore is
+  generic(name : string := "Anon"; 
+		queue_depth: integer := 3; 
+		reverse_bypass_flag: boolean := false;
+		data_width: integer := 32);
+  port(clk: in std_logic;
+       reset: in std_logic;
+       empty, full: out std_logic;
+       data_in: in std_logic_vector(data_width-1 downto 0);
+       push_req: in std_logic;
+       push_ack: out std_logic;
+       data_out: out std_logic_vector(data_width-1 downto 0);
+       pop_ack : out std_logic;
+       pop_req: in std_logic);
+  end component QueueBaseCore;
   
   component QueueBase 
     generic(name : string; queue_depth: integer := 2; data_width: integer := 32; save_one_slot: Boolean := false);
@@ -2516,7 +2551,7 @@ package BaseComponents is
   -- a special purpose queue which keeps a 1-bit data value.
   --
   component SingleBitQueueBase is
-    generic(name : string; queue_depth: integer := 1);
+    generic(name : string; queue_depth: integer := 1; bypass_flag: boolean := false);
     port(clk: in std_logic;
        reset: in std_logic;
        data_in: in std_logic_vector(0 downto 0);
@@ -2583,7 +2618,7 @@ package BaseComponents is
 
 
   component ShiftRegisterSingleBitQueue is
-    generic(name : string; queue_depth: integer; number_of_stages: integer);
+    generic(name : string; queue_depth: integer; number_of_stages: integer; bypass_flag: boolean := false);
     port(clk: in std_logic;
        reset: in std_logic;
        data_in: in std_logic_vector(0 downto 0);
@@ -3814,6 +3849,18 @@ package BaseComponents is
 		clk, reset: in std_logic);
   end component;
 
+  component SgiUpdateFsm is
+	generic (name: string);
+	port (cr_in: in Boolean;
+		cr_out: out Boolean;
+		ca_in: in Boolean;
+		ca_out: out Boolean;
+		pop_req: out std_logic;
+		pop_ack: in std_logic;
+		pop_data: in std_logic_vector(0 downto 0);
+		clk, reset: in std_logic);
+  end component;
+
   component SplitGuardInterface is
 	generic (name: string;
 	     		nreqs: integer; buffering: IntegerArray; use_guards: BooleanArray;
@@ -4605,6 +4652,20 @@ package BaseComponents is
   );
   -- 
   end component dpram_1w_1r_1024x32_Operator;
+
+  component module_clock_gate is
+	port (reset, start_req, start_ack, fin_req, fin_ack, clock_in: in std_logic;
+		clock_out : out std_logic);
+  end component module_clock_gate;
+
+  component signal_clock_gate is
+	port (reset, clock_in, clock_enable: in std_logic; clock_out : out std_logic);
+  end component signal_clock_gate;
+
+  component clock_gater is
+	port (clock_in, clock_enable: in std_logic; clock_out : out std_logic);
+  end component clock_gater;
+
 end BaseComponents;
 ------------------------------------------------------------------------------------------------
 --
@@ -5798,6 +5859,23 @@ component register_file_1w_1r_port is
          reset : in std_logic);
 end component register_file_1w_1r_port;
 
+-- with write to read bypass.
+component register_file_1w_1r_port_with_bypass is
+   generic ( name: string; g_addr_width: natural := 10; g_data_width : natural := 16);
+   port (
+         -- write port 0
+         datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         -- read port 1 
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+
+         clk: in std_logic;
+         reset : in std_logic);
+end component register_file_1w_1r_port_with_bypass;
+
 component fifo_mem_synch_write_asynch_read is
    generic ( name: string; address_width: natural;  data_width : natural;
 			mem_size: natural);
@@ -5874,6 +5952,19 @@ component base_bank_dual_port_with_registers is
          reset : in std_logic);
 end component base_bank_dual_port_with_registers;
 
+component register_file_1w_1r_port_with_registers  is
+   generic ( name: string; g_addr_width: natural := 10; g_data_width : natural := 16);
+   port (
+	 datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         dataout_0: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end component register_file_1w_1r_port_with_registers ;
 
 component merge_box_with_repeater 
   generic (name: string;
@@ -6116,6 +6207,182 @@ component PipelinedDemux is
        clk: in std_logic;
        reset: in std_logic);
 end component;
+
+component spram_generic_reverse_wrapper is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR : in std_logic_vector(address_width-1 downto 0 );
+		CLK : in std_logic;
+		WRITE_BAR: in std_logic;
+		ENABLE_BAR: in std_logic;
+		DATAIN  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT  : out std_logic_vector(data_width-1 downto 0));
+end component spram_generic_reverse_wrapper;
+
+component dpram_generic_reverse_wrapper is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR_0 : in std_logic_vector(address_width-1 downto 0 );
+		ADDR_1 : in std_logic_vector(address_width-1 downto 0 );
+		ENABLE_0_BAR : in std_logic;
+		ENABLE_1_BAR : in std_logic;
+		WRITE_0_BAR : in std_logic;
+		WRITE_1_BAR : in std_logic;
+		DATAIN_0  : in std_logic_vector(data_width-1 downto 0);
+		DATAIN_1  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT_0  : out std_logic_vector(data_width-1 downto 0);
+		DATAOUT_1  : out std_logic_vector(data_width-1 downto 0);
+		CLK : in std_logic);
+end component dpram_generic_reverse_wrapper;
+
+component register_file_1w_1r_generic_reverse_wrapper is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR_0 : in std_logic_vector(address_width-1 downto 0 );
+		ADDR_1 : in std_logic_vector(address_width-1 downto 0 );
+		ENABLE_0_BAR : in std_logic;
+		ENABLE_1_BAR : in std_logic;
+		DATAIN_0  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT_1  : out std_logic_vector(data_width-1 downto 0);
+		CLK: in std_logic);
+end component;
+
+component spmem_column is
+   generic ( name: string:="spmem_column"; 
+	g_addr_width: natural := 2;
+	g_base_bank_addr_width: natural:=4; 
+	g_base_bank_data_width : natural := 4);
+   port (datain : in std_logic_vector(g_base_bank_data_width-1 downto 0);
+         dataout: out std_logic_vector(g_base_bank_data_width-1 downto 0);
+         addrin: in std_logic_vector(g_addr_width-1 downto 0);
+         enable: in std_logic;
+         writebar : in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end component spmem_column;
+
+component spmem_selector_array is
+   generic ( name: string:="mem";
+		 g_addr_width: natural := 5; 
+	      	 g_data_width : natural := 20;
+		 g_base_addr_width: natural := 5; 
+	      	 g_base_data_width : natural := 20
+	   );
+   port (datain : in std_logic_vector(g_data_width-1 downto 0);
+         dataout: out std_logic_vector(g_data_width-1 downto 0);
+         addrin: in std_logic_vector(g_addr_width-1 downto 0);
+         enable: in std_logic;
+         writebar : in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end component;
+
+component spmem_selector is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR : in std_logic_vector(address_width-1 downto 0 );
+		CLK : in std_logic;
+	        RESET: in std_logic;
+		WRITE_BAR: in std_logic;
+		ENABLE_BAR: in std_logic;
+		DATAIN  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT  : out std_logic_vector(data_width-1 downto 0));
+end component spmem_selector;
+
+component dpmem_column is
+   generic (name: string:="dpmem_column"; 
+	g_addr_width: natural := 2;
+	g_base_bank_addr_width: natural:=4; 
+	g_base_bank_data_width : natural := 4);
+   port (datain_0 : in std_logic_vector(g_base_bank_data_width-1 downto 0);
+         dataout_0: out std_logic_vector(g_base_bank_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         writebar_0 : in std_logic;
+	 datain_1 : in std_logic_vector(g_base_bank_data_width-1 downto 0);
+         dataout_1: out std_logic_vector(g_base_bank_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         writebar_1 : in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end component dpmem_column;
+
+component dpmem_selector_array is
+   generic ( name: string:="mem";
+		 g_addr_width: natural := 5; 
+	      	 g_data_width : natural := 20;
+		 g_base_addr_width: natural := 5; 
+	      	 g_base_data_width : natural := 20
+	   );
+   port (datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         dataout_0: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         writebar_0 : in std_logic;
+	 datain_1 : in std_logic_vector(g_data_width-1 downto 0);
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         writebar_1 : in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end component;
+
+component dpmem_selector is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR_0 : in std_logic_vector(address_width-1 downto 0 );
+		ADDR_1 : in std_logic_vector(address_width-1 downto 0 );
+		ENABLE_0_BAR : in std_logic;
+		ENABLE_1_BAR : in std_logic;
+		WRITE_0_BAR : in std_logic;
+		WRITE_1_BAR : in std_logic;
+		DATAIN_0  : in std_logic_vector(data_width-1 downto 0);
+		DATAIN_1  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT_0  : out std_logic_vector(data_width-1 downto 0);
+		DATAOUT_1  : out std_logic_vector(data_width-1 downto 0);
+		CLK, RESET: in std_logic);
+end component dpmem_selector;
+
+component register_file_1w_1r_column is
+   generic ( name: string:="register_file_1w_1r_column"; 
+	g_addr_width: natural := 2;
+	g_base_bank_addr_width: natural:=4; 
+	g_base_bank_data_width : natural := 4);
+   port (datain_0 : in std_logic_vector(g_base_bank_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         dataout_1: out std_logic_vector(g_base_bank_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end component register_file_1w_1r_column;
+
+
+component register_file_1w_1r_selector_array is
+   generic ( name: string:="mem";
+		 g_addr_width: natural := 5; 
+	      	 g_data_width : natural := 20;
+		 g_base_addr_width: natural := 5; 
+	      	 g_base_data_width : natural := 20
+	   );
+   port (datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end component;
+
+component register_file_1w_1r_selector is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR_0 : in std_logic_vector(address_width-1 downto 0 );
+		ADDR_1 : in std_logic_vector(address_width-1 downto 0 );
+		ENABLE_0_BAR : in std_logic;
+		ENABLE_1_BAR : in std_logic;
+		DATAIN_0  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT_1  : out std_logic_vector(data_width-1 downto 0);
+		CLK, RESET: in std_logic);
+end component register_file_1w_1r_selector;
 
 end package mem_component_pack;
 
@@ -7634,227 +7901,6 @@ end package;
 -- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 -- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
 --------------------------------------------------------------------------------------------------
-library ieee;
-use ieee.std_logic_1164.all;
-
-package mem_ASIC_components is
-
-component SPRAM_GENERIC
-	generic (address_width: integer := 4; data_width: integer := 4);
-	port(A : in std_logic_vector(address_width-1 downto 0 );
-	CE : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;
-	CSB: in std_logic;
-	I  : in std_logic_vector(data_width-1 downto 0);
-	O  : out std_logic_vector(data_width-1 downto 0));
-end component;
-
-component SPRAM_16x4
-	port(A : in std_logic_vector(3 downto 0 );
-	CE : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;
-	CSB: in std_logic;
-	I  : in std_logic_vector(3 downto 0);
-	O  : out std_logic_vector(3 downto 0));
-end component;
-
-component SPRAM_32_16
-	port(A : in std_logic_vector(4 downto 0 );
-	CE : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;	
-	CSB: in std_logic;
-	I  : in std_logic_vector(15 downto 0);
-	O  : out std_logic_vector(15 downto 0));
-end component;
-
-component obc11_256x8
-	port(A : in std_logic_vector(7 downto 0 );
-	CEB : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;
-	CSB: in std_logic;
-	I  : in std_logic_vector(7 downto 0);
-	O  : out std_logic_vector(7 downto 0));
-end component;
-
-component SPRAM_512x24
-port(A : in std_logic_vector(8 downto 0 );
-	CE : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;
-	CSB: in std_logic;
-	I  : in std_logic_vector(23 downto 0);
-	O  : out std_logic_vector(23 downto 0));
-end component;
-
-component DPRAM_GENERIC
-	generic (address_width: integer := 4; data_width: integer := 4);
-	port (A1 : in std_logic_vector(address_width-1 downto 0 );
-	A2 : in std_logic_vector(address_width-1 downto 0 );
-	CE1 : in std_logic;
-	CE2 : in std_logic;
-	WEB1: in std_logic;
-	WEB2: in std_logic;
-	OEB1: in std_logic;
-	OEB2: in std_logic;
-	CSB1: in std_logic;
-	CSB2: in std_logic;
-	I1  : in std_logic_vector(data_width-1 downto 0);
-	I2  : in std_logic_vector(data_width-1 downto 0);
-	O1  : out std_logic_vector(data_width-1 downto 0);
-	O2  : out std_logic_vector(data_width-1 downto 0));
-end component;
-
-component DPRAM_16x4
-	port (A1 : in std_logic_vector(3 downto 0 );
-	A2 : in std_logic_vector(3 downto 0 );
-	CE1 : in std_logic;
-	CE2 : in std_logic;
-	WEB1: in std_logic;
-	WEB2: in std_logic;
-	OEB1: in std_logic;
-	OEB2: in std_logic;
-	CSB1: in std_logic;
-	CSB2: in std_logic;
-	I1  : in std_logic_vector(3 downto 0);
-	I2  : in std_logic_vector(3 downto 0);
-	O1  : out std_logic_vector(3 downto 0);
-	O2  : out std_logic_vector(3 downto 0));
-end component;
-
-component obc11_dpram_16x8
-	port (A1 : in std_logic_vector(3 downto 0 );
-	A2 : in std_logic_vector(3 downto 0 );
-	CE1 : in std_logic;
-	CE2 : in std_logic;
-	WEB1: in std_logic;
-	WEB2: in std_logic;
-	OEB1: in std_logic;
-	OEB2: in std_logic;
-	CSB1: in std_logic;
-	CSB2: in std_logic;
-	I1  : in std_logic_vector(7 downto 0);
-	I2  : in std_logic_vector(7 downto 0);
-	O1  : out std_logic_vector(7 downto 0);
-	O2  : out std_logic_vector(7 downto 0));
-end component;
-
-component DPRAM_32x8
-	port (A1 : in std_logic_vector(4 downto 0 );
-	A2 : in std_logic_vector(4 downto 0 );
-	CE1 : in std_logic;
-	CE2 : in std_logic;
-	WEB1: in std_logic;
-	WEB2: in std_logic;
-	OEB1: in std_logic;
-	OEB2: in std_logic;
-	CSB1: in std_logic;
-	CSB2: in std_logic;
-	I1  : in std_logic_vector(7 downto 0);
-	I2  : in std_logic_vector(7 downto 0);
-	O1  : out std_logic_vector(7 downto 0);
-	O2  : out std_logic_vector(7 downto 0));
-end component;
-
-component spmem_selector is
-	generic(address_width: integer:=8; data_width: integer:=8);
-	port (A : in std_logic_vector(address_width-1 downto 0 );
-	CE : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;
-	CSB: in std_logic;
-	I  : in std_logic_vector(data_width-1 downto 0);
-	O  : out std_logic_vector(data_width-1 downto 0));
-end component spmem_selector;
-
-component dpmem_selector is
-	generic(address_width: integer:=8; data_width: integer:=8);
-	port (A1 : in std_logic_vector(address_width-1 downto 0 );
-	A2 : in std_logic_vector(address_width-1 downto 0 );
-	CE1 : in std_logic;
-	CE2 : in std_logic;
-	WEB1: in std_logic;
-	WEB2: in std_logic;
-	OEB1: in std_logic;
-	OEB2: in std_logic;
-	CSB1: in std_logic;
-	CSB2: in std_logic;
-	I1  : in std_logic_vector(data_width-1 downto 0);
-	I2  : in std_logic_vector(data_width-1 downto 0);
-	O1  : out std_logic_vector(data_width-1 downto 0);
-	O2  : out std_logic_vector(data_width-1 downto 0));
-end component dpmem_selector;
-
-component spmem_column is
-	generic ( name: string:= "mem"; 
-		g_addr_width: natural := 4;
-		g_base_bank_addr_width:natural := 4; 
-		g_base_bank_data_width : natural := 4);
-
-	port (datain : in std_logic_vector(g_base_bank_data_width-1 downto 0);
-		dataout: out std_logic_vector(g_base_bank_data_width-1 downto 0);
-		addrin: in std_logic_vector(g_addr_width-1 downto 0);
-		enable: in std_logic;
-		writebar : in std_logic;
-		clk: in std_logic;
-		reset : in std_logic);
-end component spmem_column;
-
-component dpmem_column is
-   generic ( name: string:="DPRAM_16x4"; 
-	g_addr_width: natural := 2;
-	g_base_bank_addr_width: natural:=4; 
-	g_base_bank_data_width : natural := 4);
-   port (datain_0 : in std_logic_vector(g_base_bank_data_width-1 downto 0);
-         dataout_0: out std_logic_vector(g_base_bank_data_width-1 downto 0);
-         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
-         enable_0: in std_logic;
-         writebar_0 : in std_logic;
-	 datain_1 : in std_logic_vector(g_base_bank_data_width-1 downto 0);
-         dataout_1: out std_logic_vector(g_base_bank_data_width-1 downto 0);
-         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
-         enable_1: in std_logic;
-         writebar_1 : in std_logic;
-         clk: in std_logic;
-         reset : in std_logic);
-end component dpmem_column;
-
-end package;
-------------------------------------------------------------------------------------------------
---
--- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
--- All Rights Reserved.
---  
--- Permission is hereby granted, free of charge, to any person obtaining a
--- copy of this software and associated documentation files (the
--- "Software"), to deal with the Software without restriction, including
--- without limitation the rights to use, copy, modify, merge, publish,
--- distribute, sublicense, and/or sell copies of the Software, and to
--- permit persons to whom the Software is furnished to do so, subject to
--- the following conditions:
--- 
---  * Redistributions of source code must retain the above copyright
---    notice, this list of conditions and the following disclaimers.
---  * Redistributions in binary form must reproduce the above
---    copyright notice, this list of conditions and the following
---    disclaimers in the documentation and/or other materials provided
---    with the distribution.
---  * Neither the names of the AHIR Team, the Indian Institute of
---    Technology Bombay, nor the names of its contributors may be used
---    to endorse or promote products derived from this Software
---    without specific prior written permission.
---
--- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
--- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
--- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
--- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
--- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
--- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
--- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
---------------------------------------------------------------------------------------------------
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -7872,20 +7918,6 @@ use aHiR_ieee_proposed.math_utility_pkg.all;
 use aHiR_ieee_proposed.float_pkg.all;
 
 package MemCutsPackage is
-
-	-- available single-port memory cuts.
-	--    16x4, 32x16, 256x8, 512x24
-	constant spmem_cut_row_heights    :IntegerArray(1 to 4):=(16, 32, 256, 512);
-	constant spmem_cut_address_widths :IntegerArray(1 to 4):=(4, 5, 8, 9); -- log of row-widths.
-
-	constant spmem_cut_data_widths    :IntegerArray(1 to 4):=(4, 16, 8, 24);
-	
-	-- available dual-port memory cuts.
-	--    16x4, 16x8, 32x8
-	constant dpmem_cut_row_heights    :IntegerArray(1 to 3):=(16, 16, 32);
-	constant dpmem_cut_address_widths :IntegerArray(1 to 3):=(4, 4, 5); -- log of row-widths.
-
-	constant dpmem_cut_data_widths    :IntegerArray(1 to 3):=(4, 8, 8);
 
 	-- For a requirement of a memory with MxN (M-rows, N-columns) aspect
 	-- ratio, we will first determine uniform columns to implement the
@@ -7929,11 +7961,28 @@ package MemCutsPackage is
 		index: out integer; 
 		n_cols: out natural;
 		extra_cols: out integer);
+
+	-- return the cut that fills the maximum percentage of the
+	-- area (with tie break advantage to row filling).
+	-- returns a vector of length 3.
+	--       index of cut (-1 if not found)
+	--       addr_width of cut
+        --       data_width of cut
+	--       number of rows of cut
+	--       number of columns of cut.
+        function find_best_cut 
+		(constant cut_address_widths: IntegerArray;
+		    constant cut_data_widths: IntegerArray;
+		    constant cut_row_heights: IntegerArray;
+		    addr_width: in natural;  
+		    data_width: in natural) return IntegerArray;
+
 	function find_n_cols (constant cut_address_widths: IntegerArray;
 		constant cut_data_widths: IntegerArray;
 		constant cut_row_heights: IntegerArray;
 		addr_width: natural;
 		data_width: natural) return IntegerArray;
+
 	--function Ceil_Log2(constant x : integer) return integer;
 	function find_data_width (constant cut_data_widths: IntegerArray; 
 		constant n_cols: Integerarray) return integer;
@@ -8041,6 +8090,55 @@ package body MemCutsPackage is
 	extra_cols := extra_col_array(location);
 	
   end opt_find;
+	
+	-- return the cut that fills the maximum percentage of the
+	-- area (with tie break advantage to row filling).
+	-- returns a vector of length 3.
+	--       index of cut (-1 if not found)
+	--       addr_width of cut
+        --       data_width of cut
+	--       number of rows of cut
+   function find_best_cut 
+		(constant cut_address_widths: IntegerArray;
+		    constant cut_data_widths: IntegerArray;
+		    constant cut_row_heights: IntegerArray;
+		    addr_width: in natural;  
+		    data_width: in natural) return IntegerArray is
+	variable a, r, s: natural;
+	variable best_area, best_data_width, best_addr_width: natural;
+	variable best_index: integer;
+	variable ret_var: IntegerArray(1 to 5);
+  begin
+
+	s := ((2**addr_width) * data_width);
+	ret_var := (others => 0);
+
+	best_area := 0;
+	best_data_width := 0;
+ 	best_addr_width := 0;
+        best_index := -1;
+
+        for  I in 1 to cut_address_widths'length loop
+                a := (cut_row_heights(I) * cut_data_widths(I));
+		if (a <= s) and  (cut_data_widths(I) <= data_width) and (cut_address_widths(I) <= addr_width)
+			and ((a > best_area) or ((a = best_area) and (cut_data_widths(I) > best_data_width))) then
+		   best_index := I;
+		   best_area  := a;
+                   best_data_width  := cut_data_widths(I);
+		   best_addr_width := cut_address_widths(I);
+		end if;
+	end loop;
+
+	ret_var(1) := best_index;
+	if(best_index > 0) then
+	   ret_var(2) := best_addr_width;
+           ret_var(3) := best_data_width;
+	   ret_var(4) := (2 ** (addr_width - best_addr_width));
+	   ret_var(5) := (data_width/best_data_width);
+        end if;
+
+	return ret_var;
+  end find_best_cut;
 
   -- function: find_n_cols
   -- Description: Finds the number of columns of each cut required to completely
@@ -8159,6 +8257,1020 @@ end package body;
 
 ------------------------------------------------------------------------------------------------
 --
+-- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+--------------------------------------------------------------------------------------------------
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.types.all;
+use ahir.utilities.all;
+
+package mem_ASIC_components is
+
+  component DPRAM_32X8 is
+   port(       QA,QB : out std_logic_vector(7 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(4 downto 0) := TieHighSlvConstant(5);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end component;
+  component DPRAM_256X32 is
+   port(       QA,QB : out std_logic_vector(31 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(31 downto 0) := TieHighSlvConstant(32);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end component;
+  component DPRAM_2048X8 is
+   port(       QA,QB : out std_logic_vector(7 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(10 downto 0) := TieHighSlvConstant(11);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end component;
+  component DPRAM_2048X36 is
+   port(       QA,QB : out std_logic_vector(35 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(10 downto 0) := TieHighSlvConstant(11);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(35 downto 0) := TieHighSlvConstant(36);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end component;
+  component DPRAM_256X52 is
+   port(       QA,QB : out std_logic_vector(51 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(51 downto 0) := TieHighSlvConstant(52);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end component;
+  component DPRAM_32X64 is
+   port(       QA,QB : out std_logic_vector(63 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(4 downto 0) := TieHighSlvConstant(5);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(63 downto 0) := TieHighSlvConstant(64);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end component;
+  component DPRAM_32X4 is
+   port(       QA,QB : out std_logic_vector(3 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(4 downto 0) := TieHighSlvConstant(5);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(3 downto 0) := TieHighSlvConstant(4);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end component;
+  component SRAM_64X4 is
+   port(       Q : out std_logic_vector(3 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(3 downto 0) := TieHighSlvConstant(4);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_64X32 is
+   port(       Q : out std_logic_vector(31 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(31 downto 0) := TieHighSlvConstant(32);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_256X8 is
+   port(       Q : out std_logic_vector(7 downto 0);
+      A, AM : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      D, DM, BWEB, BWEBM : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_256X32 is
+   port(       Q : out std_logic_vector(31 downto 0);
+      A, AM : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      D, DM, BWEB, BWEBM : in std_logic_vector(31 downto 0) := TieHighSlvConstant(32);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_8192X8 is
+   port(       Q : out std_logic_vector(7 downto 0);
+      A, AM : in std_logic_vector(12 downto 0) := TieHighSlvConstant(13);
+      D, DM, BWEB, BWEBM : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_32X32 is
+   port(       Q : out std_logic_vector(31 downto 0);
+      A, AM : in std_logic_vector(4 downto 0) := TieHighSlvConstant(5);
+      D, DM, BWEB, BWEBM : in std_logic_vector(31 downto 0) := TieHighSlvConstant(32);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_128X22 is
+   port(       Q : out std_logic_vector(21 downto 0);
+      A, AM : in std_logic_vector(6 downto 0) := TieHighSlvConstant(7);
+      D, DM, BWEB, BWEBM : in std_logic_vector(21 downto 0) := TieHighSlvConstant(22);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_1024X8 is
+   port(       Q : out std_logic_vector(7 downto 0);
+      A, AM : in std_logic_vector(9 downto 0) := TieHighSlvConstant(10);
+      D, DM, BWEB, BWEBM : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_1024X64 is
+   port(       Q : out std_logic_vector(63 downto 0);
+      A, AM : in std_logic_vector(9 downto 0) := TieHighSlvConstant(10);
+      D, DM, BWEB, BWEBM : in std_logic_vector(63 downto 0) := TieHighSlvConstant(64);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_64X128 is
+   port(       Q : out std_logic_vector(127 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(127 downto 0) := TieHighSlvConstant(128);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_64X67 is
+   port(       Q : out std_logic_vector(66 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(66 downto 0) := TieHighSlvConstant(67);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_64X24 is
+   port(       Q : out std_logic_vector(23 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(23 downto 0) := TieHighSlvConstant(24);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+  component SRAM_64X90 is
+   port(       Q : out std_logic_vector(89 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(89 downto 0) := TieHighSlvConstant(90);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end component;
+end package;
+
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+--------------------------------------------------------------------------------------------------
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library ahir;	
+use ahir.Types.all;	
+use ahir.Subprograms.all;	
+use ahir.mem_function_pack.all;
+use ahir.memory_subsystem_package.all;
+--use ahir.Utilities.all;
+
+library aHiR_ieee_proposed;
+use aHiR_ieee_proposed.math_utility_pkg.all;
+use aHiR_ieee_proposed.float_pkg.all;
+
+package MemcutDescriptionPackage is
+   constant spmem_cut_row_heights : IntegerArray(1 to 13) := (64, 64, 64, 64, 1024, 1024, 128, 32, 8192, 256, 256, 64, 64);
+    constant spmem_cut_address_widths : IntegerArray(1 to 13) := (6, 6, 6, 6, 10, 10, 7, 5, 13, 8, 8, 6, 6);
+    constant spmem_cut_data_widths : IntegerArray(1 to 13) := (90, 24, 67, 128, 64, 8, 22, 32, 8, 32, 8, 32, 4);
+   constant dpmem_cut_row_heights : IntegerArray(1 to 7) := (32, 32, 256, 2048, 2048, 256, 32);
+    constant dpmem_cut_address_widths : IntegerArray(1 to 7) := (5, 5, 8, 11, 11, 8, 5);
+    constant dpmem_cut_data_widths : IntegerArray(1 to 7) := (4, 64, 52, 36, 8, 32, 8);
+   constant register_file_1w_1r_cut_row_heights : IntegerArray(1 to 7) := (32, 32, 256, 2048, 2048, 256, 32);
+    constant register_file_1w_1r_cut_address_widths : IntegerArray(1 to 7) := (5, 5, 8, 11, 11, 8, 5);
+    constant register_file_1w_1r_cut_data_widths : IntegerArray(1 to 7) := (4, 64, 52, 36, 8, 32, 8);
+end package;
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+--------------------------------------------------------------------------------------------------
+
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library ahir;
+use ahir.mem_ASIC_components.all;
+use ahir.types.all;
+use ahir.utilities.all;
+
+-- Entity to instantiate different available memory cuts based on the 
+-- address_width and data_width generics passed.
+entity dpmem_selector is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR_0 : in std_logic_vector(address_width-1 downto 0 );
+		ADDR_1 : in std_logic_vector(address_width-1 downto 0 );
+		ENABLE_0_BAR : in std_logic;
+		ENABLE_1_BAR : in std_logic;
+		WRITE_0_BAR : in std_logic;
+		WRITE_1_BAR : in std_logic;
+		DATAIN_0  : in std_logic_vector(data_width-1 downto 0);
+		DATAIN_1  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT_0  : out std_logic_vector(data_width-1 downto 0);
+		DATAOUT_1  : out std_logic_vector(data_width-1 downto 0);
+		CLK, RESET: in std_logic);
+end entity dpmem_selector;
+
+architecture StructGen of dpmem_selector is
+	signal TIE_HIGH, TIE_LOW: std_logic;
+        signal TIE_LOW_2, TIE_HIGH_2: std_logic_vector(1 downto 0);
+        signal TIE_LOW_3: std_logic_vector(2 downto 0);
+        signal TIE_LOW_4: std_logic_vector(3 downto 0);
+begin
+	TIE_HIGH <= '1';
+	TIE_LOW <= '0';
+	TIE_LOW_2 <= (others => '0');
+	TIE_HIGH_2 <= (others => '1');
+	TIE_LOW_3 <= (others => '0');
+	TIE_LOW_4 <= (others => '0');
+  DPRAM_32X8_gen: if (address_width = 5) and (data_width = 8) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(4 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(4 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_32X8
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => WRITE_0_BAR, WEBB => WRITE_1_BAR, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATAIN_1, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => DATAOUT_0, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_32X8_gen;
+  DPRAM_256X32_gen: if (address_width = 8) and (data_width = 32) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(31 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(31 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(7 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_256X32
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => WRITE_0_BAR, WEBB => WRITE_1_BAR, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATAIN_1, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => DATAOUT_0, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_256X32_gen;
+  DPRAM_2048X8_gen: if (address_width = 11) and (data_width = 8) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(10 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(10 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_2048X8
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => WRITE_0_BAR, WEBB => WRITE_1_BAR, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATAIN_1, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => DATAOUT_0, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_2048X8_gen;
+  DPRAM_2048X36_gen: if (address_width = 11) and (data_width = 36) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(35 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(35 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(10 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(10 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_2048X36
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => WRITE_0_BAR, WEBB => WRITE_1_BAR, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATAIN_1, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => DATAOUT_0, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_2048X36_gen;
+  DPRAM_256X52_gen: if (address_width = 8) and (data_width = 52) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(51 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(51 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(7 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_256X52
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => WRITE_0_BAR, WEBB => WRITE_1_BAR, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATAIN_1, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => DATAOUT_0, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_256X52_gen;
+  DPRAM_32X64_gen: if (address_width = 5) and (data_width = 64) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(63 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(63 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(4 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(4 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_32X64
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => WRITE_0_BAR, WEBB => WRITE_1_BAR, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATAIN_1, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => DATAOUT_0, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_32X64_gen;
+  DPRAM_32X4_gen: if (address_width = 5) and (data_width = 4) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(3 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(3 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(4 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(4 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_32X4
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => WRITE_0_BAR, WEBB => WRITE_1_BAR, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATAIN_1, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => DATAOUT_0, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_32X4_gen;
+end StructGen;
+
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+--------------------------------------------------------------------------------------------------
+
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library ahir;
+use ahir.mem_ASIC_components.all;
+
+-- Entity to instantiate different available memory cuts based on the 
+-- address_width and data_width generics passed.
+entity register_file_1w_1r_selector is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR_0 : in std_logic_vector(address_width-1 downto 0 );
+		ADDR_1 : in std_logic_vector(address_width-1 downto 0 );
+		ENABLE_0_BAR : in std_logic;
+		ENABLE_1_BAR : in std_logic;
+		DATAIN_0  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT_1  : out std_logic_vector(data_width-1 downto 0);
+		CLK, RESET: in std_logic);
+end entity register_file_1w_1r_selector;
+
+architecture StructGen of register_file_1w_1r_selector is
+	signal TIE_HIGH, TIE_LOW: std_logic;
+        signal TIE_LOW_2, TIE_HIGH_2: std_logic_vector(1 downto 0);
+        signal TIE_LOW_3: std_logic_vector(2 downto 0);
+        signal TIE_LOW_4: std_logic_vector(3 downto 0);
+begin
+	TIE_HIGH <= '1';
+	TIE_LOW <= '0';
+        TIE_LOW_2 <= (others => '0');
+        TIE_HIGH_2 <= (others => '1');
+	TIE_LOW_3 <= (others => '0');
+	TIE_LOW_4 <= (others => '0');
+  DPRAM_32X8_gen: if (address_width = 5) and (data_width = 8) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(4 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(4 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_32X8
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => ENABLE_0_BAR, WEBB => TIE_HIGH, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATA_TIE_LOW, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => OPEN, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_32X8_gen;
+  DPRAM_256X32_gen: if (address_width = 8) and (data_width = 32) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(31 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(31 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(7 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_256X32
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => ENABLE_0_BAR, WEBB => TIE_HIGH, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATA_TIE_LOW, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => OPEN, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_256X32_gen;
+  DPRAM_2048X8_gen: if (address_width = 11) and (data_width = 8) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(10 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(10 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_2048X8
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => ENABLE_0_BAR, WEBB => TIE_HIGH, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATA_TIE_LOW, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => OPEN, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_2048X8_gen;
+  DPRAM_2048X36_gen: if (address_width = 11) and (data_width = 36) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(35 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(35 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(10 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(10 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_2048X36
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => ENABLE_0_BAR, WEBB => TIE_HIGH, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATA_TIE_LOW, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => OPEN, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_2048X36_gen;
+  DPRAM_256X52_gen: if (address_width = 8) and (data_width = 52) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(51 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(51 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(7 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_256X52
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => ENABLE_0_BAR, WEBB => TIE_HIGH, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATA_TIE_LOW, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => OPEN, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_256X52_gen;
+  DPRAM_32X64_gen: if (address_width = 5) and (data_width = 64) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(63 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(63 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(4 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(4 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_32X64
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => ENABLE_0_BAR, WEBB => TIE_HIGH, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATA_TIE_LOW, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => OPEN, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_32X64_gen;
+  DPRAM_32X4_gen: if (address_width = 5) and (data_width = 4) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(3 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(3 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(4 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(4 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: DPRAM_32X4
+   port map (AA => ADDR_0, AB => ADDR_1, CLKA => CLK, CLKB => CLK, WEBA => ENABLE_0_BAR, WEBB => TIE_HIGH, CEBA => ENABLE_0_BAR, CEBB => ENABLE_1_BAR,  DA => DATAIN_0, DB => DATA_TIE_LOW, BWEBA => DATA_TIE_LOW, BWEBB => DATA_TIE_LOW, QA => OPEN, QB => DATAOUT_1,  SLP => TIE_LOW, SD => TIE_LOW, VG => TIE_LOW, VS => TIE_LOW, AWT => TIE_LOW, CEBMA => TIE_HIGH, CEBMB => TIE_HIGH, WEBMA => TIE_HIGH, WEBMB => TIE_HIGH,  BWEBMA => DATA_TIE_HIGH, BWEBMB => DATA_TIE_HIGH, AMA => ADDR_TIE_HIGH,  AMB => ADDR_TIE_HIGH,  DMA => DATA_TIE_HIGH,  DMB => DATA_TIE_HIGH, BIST => TIE_LOW,  WTSEL => TIE_LOW_2,  RTSEL => TIE_LOW_2);
+         end block;
+  end generate DPRAM_32X4_gen;
+end StructGen;
+
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+--------------------------------------------------------------------------------------------------
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library ahir;
+use ahir.mem_ASIC_components.all;
+use ahir.types.all;
+use ahir.utilities.all;
+
+-- Entity to instantiate different available memory cuts based on the 
+-- address_width and data_width generics passed.
+entity spmem_selector is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR : in std_logic_vector(address_width-1 downto 0 );
+		CLK : in std_logic;
+	        RESET: in std_logic;
+		WRITE_BAR: in std_logic;
+		ENABLE_BAR: in std_logic;
+		DATAIN  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT  : out std_logic_vector(data_width-1 downto 0));
+end entity spmem_selector;
+
+architecture StructGen of spmem_selector is
+
+  signal TIE_HIGH, TIE_LOW: std_logic;
+  signal TIE_LOW_2, TIE_HIGH_2: std_logic_vector(1 downto 0);
+  signal TIE_LOW_3: std_logic_vector(2 downto 0);
+  signal TIE_LOW_4: std_logic_vector(3 downto 0);
+
+begin
+  
+  TIE_HIGH <= '1';
+  TIE_LOW  <= '0';
+  TIE_LOW_2 <= (others => '0');
+  TIE_HIGH_2 <= (others => '1');
+  TIE_LOW_3 <= (others => '0');
+  TIE_LOW_4 <= (others => '0');
+  SRAM_64X4_gen: if (address_width = 6) and (data_width = 4) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(3 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(3 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(5 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(5 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_64X4
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_64X4_gen;
+  SRAM_64X32_gen: if (address_width = 6) and (data_width = 32) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(31 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(31 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(5 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(5 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_64X32
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_64X32_gen;
+  SRAM_256X8_gen: if (address_width = 8) and (data_width = 8) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(7 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_256X8
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_256X8_gen;
+  SRAM_256X32_gen: if (address_width = 8) and (data_width = 32) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(31 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(31 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(7 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_256X32
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_256X32_gen;
+  SRAM_8192X8_gen: if (address_width = 13) and (data_width = 8) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(12 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(12 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_8192X8
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_8192X8_gen;
+  SRAM_32X32_gen: if (address_width = 5) and (data_width = 32) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(31 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(31 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(4 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(4 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_32X32
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_32X32_gen;
+  SRAM_128X22_gen: if (address_width = 7) and (data_width = 22) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(21 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(21 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(6 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(6 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_128X22
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_128X22_gen;
+  SRAM_1024X8_gen: if (address_width = 10) and (data_width = 8) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(7 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(7 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(9 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(9 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_1024X8
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_1024X8_gen;
+  SRAM_1024X64_gen: if (address_width = 10) and (data_width = 64) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(63 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(63 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(9 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(9 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_1024X64
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_1024X64_gen;
+  SRAM_64X128_gen: if (address_width = 6) and (data_width = 128) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(127 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(127 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(5 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(5 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_64X128
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_64X128_gen;
+  SRAM_64X67_gen: if (address_width = 6) and (data_width = 67) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(66 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(66 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(5 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(5 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_64X67
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_64X67_gen;
+  SRAM_64X24_gen: if (address_width = 6) and (data_width = 24) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(23 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(23 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(5 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(5 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_64X24
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_64X24_gen;
+  SRAM_64X90_gen: if (address_width = 6) and (data_width = 90) generate
+     mc: block 
+            signal DATA_TIE_LOW  : std_logic_vector(89 downto 0); 
+            signal DATA_TIE_HIGH : std_logic_vector(89 downto 0); 
+            signal ADDR_TIE_LOW  : std_logic_vector(5 downto 0); 
+            signal ADDR_TIE_HIGH : std_logic_vector(5 downto 0); 
+         begin 
+              DATA_TIE_LOW <= (others => '0'); 
+              DATA_TIE_HIGH <= (others => '1'); 
+              ADDR_TIE_LOW <= (others => '0'); 
+              ADDR_TIE_HIGH <= (others => '1'); 
+               inst: SRAM_64X90
+   port map ( A => ADDR,  CLK => CLK, WEB => WRITE_BAR, BWEB => DATA_TIE_LOW, CEB => ENABLE_BAR,  D => DATAIN, Q => DATAOUT,  SLP => TIE_LOW, SD => TIE_LOW, CEBM => TIE_HIGH, WEBM => TIE_HIGH, BWEBM => DATA_TIE_HIGH, AM => ADDR_TIE_HIGH, DM => DATA_TIE_HIGH, BIST  => TIE_LOW);
+         end block;
+  end generate SRAM_64X90_gen;
+end StructGen;
+
+------------------------------------------------------------------------------------------------
+--
 -- Copyright (C) 2010-: Madhav P. Desai
 -- All Rights Reserved.
 --  
@@ -8193,6 +9305,8 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+library ahir;
+use ahir.utilities.all;
 --
 -- dual port synchronous memory.. implemented with registers..
 --
@@ -8219,6 +9333,8 @@ architecture PlainRegisters of base_bank_dual_port_with_registers is
   signal mem_array : MemArray((2**g_addr_width)-1 downto 0) := (others => (others => '0'));
 begin  -- PlainRegisters
 
+  assert false report "DP MEMFF " & Convert_To_String ( g_data_width*(2**g_addr_width)) 
+		severity note;
   --
   -- try to flag read/write clash!
   --
@@ -8300,6 +9416,9 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+library ahir;
+use ahir.utilities.all;
+
 -- memory implemented with registers..
 entity base_bank_with_registers is
    generic ( name: string; g_addr_width: natural := 10; g_data_width : natural := 16);
@@ -8319,6 +9438,9 @@ architecture PlainRegisters of base_bank_with_registers is
   signal read_data : std_logic_vector(g_data_width-1 downto 0);
 
 begin  -- PlainRegisters
+
+  assert false report "SP MEMFF " & Convert_To_String ( g_data_width*(2**g_addr_width)) 
+		severity note;
 
   -- read/write process
   process(clk,addrin,enable,writebar)
@@ -9485,6 +10607,185 @@ begin  -- SimModel
 end behave;
 ------------------------------------------------------------------------------------------------
 --
+-- Copyright (C) 2010-: Madhav P. Desai
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+------------------------------------------------------------------------------------------------
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library ahir;
+use ahir.utilities.all;
+
+--
+-- 1 read/1-write port synchronous memory.. implemented with registers..
+--
+entity register_file_1w_1r_port_with_registers  is
+   generic ( name: string; g_addr_width: natural := 10; g_data_width : natural := 16);
+   port (
+	 datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         dataout_0: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end entity register_file_1w_1r_port_with_registers ;
+
+
+architecture PlainRegisters of register_file_1w_1r_port_with_registers  is
+  type MemArray is array (natural range <>) of std_logic_vector(g_data_width-1 downto 0);
+  signal mem_array : MemArray((2**g_addr_width)-1 downto 0) := (others => (others => '0'));
+begin  -- PlainRegisters
+
+  assert false report "1W1R MEMFF " & Convert_To_String ( g_data_width*(2**g_addr_width)) 
+		severity note;
+
+  -- read/write process
+  process(clk, addrin_0,enable_0,addrin_1,enable_1)
+  begin
+
+    -- synch read-write memory
+    if(clk'event and clk ='1') then
+
+     if(reset = '1') then
+	dataout_1 <= (others => '0');
+     else
+      	if(enable_0 = '1') then 
+        	mem_array(To_Integer(unsigned(addrin_0))) <= datain_0;
+      	end if;
+      	if(enable_1 = '1') then
+        	dataout_1 <= mem_array(To_Integer(unsigned(addrin_1)));
+      	end if;
+     end if;
+    end if;
+
+  end process;
+
+end PlainRegisters;
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+------------------------------------------------------------------------------------------------
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+--
+-- dual port synchronous memory.
+--   similar to a flip-flop as far as simultaneous read/write  is concerned
+--   if both ports try to write to the same address, the second port (1) wins
+--
+entity base_bank_dual_port_for_vivado is
+   generic ( name: string;  g_addr_width: natural := 10; g_data_width : natural := 16);
+	port(
+		clka : in std_logic;
+		clkb : in std_logic;
+		ena : in std_logic;
+		enb : in std_logic;
+		wea : in std_logic;
+		web : in std_logic;
+		addra : in std_logic_vector(g_addr_width-1 downto 0);
+		addrb : in std_logic_vector(g_addr_width-1 downto 0);
+		dia : in std_logic_vector(g_data_width-1 downto 0);
+		dib : in std_logic_vector(g_data_width-1 downto 0);
+		doa : out std_logic_vector(g_data_width-1 downto 0);
+		dob : out std_logic_vector(g_data_width-1 downto 0)
+		);
+end entity base_bank_dual_port_for_vivado;
+
+
+architecture XilinxBramInfer of base_bank_dual_port_for_vivado is
+  type MemArray is array (natural range <>) of std_logic_vector(g_data_width-1 downto 0);
+  shared variable mem_array : MemArray((2**g_addr_width)-1 downto 0) := (others => (others => '0'));
+begin  -- XilinxBramInfer
+
+
+ process(CLKA)	
+	begin
+	if CLKA'event and CLKA = '1' then
+			if ENA = '1' then
+					DOA <= mem_array(to_integer(unsigned(ADDRA)));
+				if WEA = '1' then
+					mem_array(to_integer(unsigned(ADDRA))) := DIA;
+				end if;
+			end if;
+		end if;
+	end process;
+
+	process(CLKB)
+	begin
+		if CLKB'event and CLKB = '1' then
+			if ENB = '1' then
+				DOB <= mem_array(to_integer(unsigned(ADDRB)));
+				if WEB = '1' then
+					mem_array(to_integer(unsigned(ADDRB))) := DIB;
+				end if;
+			end if;
+		end if;
+	end process;
+end XilinxBramInfer;
+
+
+------------------------------------------------------------------------------------------------
+--
 -- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
 -- All Rights Reserved.
 --  
@@ -9522,6 +10823,49 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+library ahir;
+use ahir.mem_component_pack.all;
+
+entity base_bank_dual_port_r_wrap is
+   generic ( name: string; g_addr_width: natural := 10; g_data_width : natural := 16);
+   port (
+	 datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         dataout_0: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         writebar_0 : in std_logic;
+	 datain_1 : in std_logic_vector(g_data_width-1 downto 0);
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         writebar_1 : in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end entity base_bank_dual_port_r_wrap;
+architecture RecWrap of base_bank_dual_port_r_wrap is
+begin
+	rinst: base_bank_dual_port 
+		generic map (name => name, g_addr_width => g_addr_width, g_data_width => g_data_width)
+		port map (
+				datain_0 => datain_0,
+				dataout_0 => dataout_0,
+				addrin_0 => addrin_0,
+				enable_0 => enable_0,
+				writebar_0 => writebar_0,
+				datain_1 => datain_1,
+				dataout_1 => dataout_1,
+				addrin_1 => addrin_1,
+				enable_1 => enable_1,
+				writebar_1 => writebar_1,
+				clk => clk , reset => reset
+			);
+end RecWrap;
+
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
 library ahir;	
 use ahir.Types.all;	
 use ahir.Subprograms.all;	
@@ -9536,6 +10880,8 @@ library ahir;
 use ahir.Types.all;
 use ahir.MemCutsPackage.all;
 use ahir.mem_ASIC_components.all;
+use ahir.MemcutDescriptionPackage.all;
+use ahir.mem_component_pack.all;
 
 entity base_bank_dual_port is
    generic ( name: string; g_addr_width: natural := 10; g_data_width : natural := 16);
@@ -9554,103 +10900,171 @@ entity base_bank_dual_port is
          reset : in std_logic);
 end entity base_bank_dual_port;
 
-architecture struct of base_bank_dual_port is 
 
-  -- n_cols contains the required number of columns of available memory cuts
-  -- to build the given memory 
-  constant n_cols: IntegerArray(1 to 3) := find_n_cols(dpmem_cut_address_widths, dpmem_cut_data_widths, dpmem_cut_row_heights, g_addr_width, g_data_width);
+architecture improved_struct of base_bank_dual_port is
+  component base_bank_dual_port_r_wrap is
+   generic ( name: string; g_addr_width: natural := 10; g_data_width : natural := 16);
+   port (
+	 datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         dataout_0: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         writebar_0 : in std_logic;
+	 datain_1 : in std_logic_vector(g_data_width-1 downto 0);
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         writebar_1 : in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+   end component base_bank_dual_port_r_wrap;
 
-  --total_data_width is the size of the resized data 
-  constant total_data_width: integer := find_data_width(dpmem_cut_data_widths, n_cols);
-
-  --resized data and addresses
-  signal resized_datain_0: std_logic_vector(total_data_width-1 downto 0);
-  signal resized_dataout_0: std_logic_vector(total_data_width-1 downto 0);
-  signal resized_datain_1: std_logic_vector(total_data_width-1 downto 0);
-  signal resized_dataout_1: std_logic_vector(total_data_width-1 downto 0);
-
-  signal latch_dataout_0, latch_dataout_1: std_logic;
-  signal dataout_reg_0, dataout_reg_1: std_logic_vector(g_data_width-1 downto 0);
-
+	constant best_cut_info: IntegerArray(1 to 5) :=
+			find_best_cut (dpmem_cut_address_widths, 
+					dpmem_cut_data_widths,
+					dpmem_cut_row_heights,
+					g_addr_width, g_data_width);
+	constant best_cut_address_width : integer := best_cut_info(2);
+	constant best_cut_data_width    : integer := best_cut_info(3);
+	constant best_cut_nrows         : integer := best_cut_info(4);
+	constant best_cut_ncols         : integer := best_cut_info(5);
+	constant use_side_strip: boolean :=
+			(best_cut_info(1) > 0) and
+					((best_cut_data_width*best_cut_ncols) < g_data_width);
 begin
+	noCutFound: if (best_cut_info(1) <= 0) generate
+		regbb_inst: base_bank_dual_port_with_registers
+				generic map (name => name & ":regs", g_addr_width => g_addr_width,
+						g_data_width => g_data_width)
+			        port map (
+					datain_0 => datain_0, 
+					dataout_0 => dataout_0, 
+					addrin_0 => addrin_0,
+					enable_0 => enable_0, 
+					writebar_0 => writebar_0, 
+					datain_1 => datain_1, 
+					dataout_1 => dataout_1, 
+					addrin_1 => addrin_1,
+					enable_1 => enable_1, 
+					writebar_1 => writebar_1, 
+					clk => clk,
+					reset => reset);
+	end generate noCutFound;
 
-  process(clk, reset)
-  begin
-	if(clk'event and clk = '1') then
-		if(reset = '1') then
-			latch_dataout_0 <= '0';
-			latch_dataout_1 <= '0';
-		else
-			latch_dataout_0 <= enable_0 and writebar_0;
-			latch_dataout_1 <= enable_1 and writebar_1;
-		end if;
-	end if;
-  end process;
+	cutFound: if (best_cut_info(1) > 0) generate
 
-  process (datain_0)
-  begin
-	resized_datain_0 <= (others=>'0');
-	resized_datain_0(datain_0'length-1 downto 0) <= datain_0;
-  end process;
-  
-  process (datain_1)
-  begin
-	resized_datain_1 <= (others=>'0');
-	resized_datain_1(datain_1'length-1 downto 0) <= datain_1;
-  end process;
+           mb: block
+		-- declare array access signals.
+		constant array_addr_width : integer := g_addr_width;
+		constant array_data_width : integer := best_cut_data_width*best_cut_ncols;
 
-  mem_gen: for i in 1 to dpmem_cut_address_widths'length generate -- loop to cover all the cuts
-	gen_cols: for j in 0 to n_cols(i)-1 generate -- generate if it's no.of columns 								     -- to be used >=1
-		inst: dpmem_column generic map ( name => "col_gen",
-				g_addr_width => g_addr_width,
-				g_base_bank_addr_width => dpmem_cut_address_widths(i), 
-				g_base_bank_data_width => dpmem_cut_data_widths(i))
-			
-			port map ( datain_0 => resized_datain_0((j+1)*dpmem_cut_data_widths(i)
-				+ col_index(dpmem_cut_data_widths, n_cols, i-1)-1 downto j*dpmem_cut_data_widths(i)
-				+ col_index(dpmem_cut_data_widths, n_cols, i-1)), 
-				
-				dataout_0 => resized_dataout_0((j+1)*dpmem_cut_data_widths(i)
-				+ col_index(dpmem_cut_data_widths, n_cols, i-1)-1 downto j*dpmem_cut_data_widths(i)
-				+ col_index(dpmem_cut_data_widths, n_cols, i-1)),
-				
-				addrin_0 => addrin_0,
-       				enable_0 => enable_0,
-         			writebar_0 => writebar_0,
-			
-				datain_1 => resized_datain_1((j+1)*dpmem_cut_data_widths(i)
-				+ col_index(dpmem_cut_data_widths, n_cols, i-1)-1 downto j*dpmem_cut_data_widths(i)
-				+ col_index(dpmem_cut_data_widths, n_cols, i-1)), 
-				
-				dataout_1 => resized_dataout_1((j+1)*dpmem_cut_data_widths(i)
-				+ col_index(dpmem_cut_data_widths, n_cols,i-1)-1 downto j*dpmem_cut_data_widths(i)
-				+ col_index(dpmem_cut_data_widths, n_cols, i-1)),
-       				
-				addrin_1 => addrin_1,
-       				enable_1 => enable_1,
-         			writebar_1 => writebar_1,
-       				clk => clk,
-         			reset => reset);
+		signal array_datain_0: std_logic_vector(array_data_width-1 downto 0);
+		signal array_dataout_0: std_logic_vector(array_data_width-1 downto 0);
 
-	end generate gen_cols;
-  end generate mem_gen;		
+		signal array_datain_1: std_logic_vector(array_data_width-1 downto 0);
+		signal array_dataout_1: std_logic_vector(array_data_width-1 downto 0);
 
-  process (clk, latch_dataout_0, resized_dataout_0, latch_dataout_1, resized_dataout_1)
-  begin
-	if(clk'event and clk = '1') then
-		if(latch_dataout_0 = '1') then
-			dataout_reg_0 <= resized_dataout_0(dataout_0'length-1 downto 0);
-		end if;
-		if(latch_dataout_1 = '1') then
-			dataout_reg_1 <= resized_dataout_1(dataout_1'length-1 downto 0);
-		end if;
-	end if;
-  end process;
-  dataout_0 <= dataout_reg_0 when (latch_dataout_0 = '0') else resized_dataout_0(dataout_0'length-1 downto 0);
-  dataout_1 <= dataout_reg_1 when (latch_dataout_1 = '0') else resized_dataout_1(dataout_1'length-1 downto 0);
+		signal latch_dataout_0, latch_dataout_1: std_logic;
+		
+		signal dataout_0_sig, dataout_1_sig, dataout_0_reg, dataout_1_reg:
+			std_logic_vector(g_data_width-1 downto 0);
+           begin
+
+		array_datain_0 <= datain_0 (g_data_width-1 downto (g_data_width - array_data_width));
+		dataout_0_sig (g_data_width-1 downto (g_data_width - array_data_width)) <= array_dataout_0;
+
+		array_datain_1 <= datain_1 (g_data_width-1 downto (g_data_width - array_data_width));
+		dataout_1_sig (g_data_width-1 downto (g_data_width - array_data_width)) <= array_dataout_1;
 
 
-end struct;
+		-- selector array..
+		arrayInst: dpmem_selector_array 
+				generic map (name =>  name & ":marray",
+						g_addr_width => array_addr_width,
+						g_data_width => array_data_width,
+						g_base_addr_width => best_cut_address_width,
+						g_base_data_width => best_cut_data_width)
+				port map (
+					datain_0   =>  array_datain_0,
+					dataout_0  =>  array_dataout_0,
+					addrin_0   =>  addrin_0,
+					enable_0   =>  enable_0,
+				        writebar_0 =>  writebar_0,
+					datain_1   =>  array_datain_1,
+					dataout_1  =>  array_dataout_1,
+					addrin_1   =>  addrin_1,
+					enable_1   =>  enable_1,
+				        writebar_1 =>  writebar_1,
+					clk => clk,
+					reset => reset);
+
+
+		genSideStrip : if use_side_strip generate
+		  sb: block
+			signal sstrip_datain_0: std_logic_vector((g_data_width - array_data_width)-1 downto 0);
+			signal sstrip_datain_1: std_logic_vector((g_data_width - array_data_width)-1 downto 0);
+			signal sstrip_dataout_0: std_logic_vector((g_data_width - array_data_width)-1 downto 0);
+			signal sstrip_dataout_1: std_logic_vector((g_data_width - array_data_width)-1 downto 0);
+		  begin
+
+			sstrip_datain_0 <= datain_0((g_data_width-array_data_width)-1 downto 0);
+			dataout_0_sig((g_data_width-array_data_width)-1 downto 0) <= sstrip_dataout_0;
+
+			sstrip_datain_1 <= datain_1((g_data_width-array_data_width)-1 downto 0);
+			dataout_1_sig((g_data_width-array_data_width)-1 downto 0) <= sstrip_dataout_1;
+
+			side_strip_inst: component base_bank_dual_port_r_wrap
+				generic map (name => name & ":sstrip", 
+						g_addr_width => g_addr_width,
+						g_data_width => (g_data_width - array_data_width))
+			        port map (
+					datain_0 => sstrip_datain_0, 
+					dataout_0 => sstrip_dataout_0, 
+					addrin_0 => addrin_0,
+					enable_0 => enable_0, 
+					writebar_0 => writebar_0, 
+					datain_1 => sstrip_datain_1, 
+					dataout_1 => sstrip_dataout_1, 
+					addrin_1 => addrin_1,
+					enable_1 => enable_1, 
+					writebar_1 => writebar_1, 
+					clk => clk,
+					reset => reset);
+		   end block sb;
+		end generate genSideStrip;
+
+  	    	process(clk, reset)
+  	    	begin
+			if(clk'event and clk = '1') then
+				if(reset = '1') then
+					latch_dataout_0 <= '0';
+					latch_dataout_1 <= '0';
+				else
+					latch_dataout_0 <= enable_0 and writebar_0;
+					latch_dataout_1 <= enable_1 and writebar_1;
+				end if;
+			end if;
+  	    	end process;
+	
+      	    	process (clk, latch_dataout_0, dataout_0_sig, latch_dataout_1, dataout_1_sig)
+  	    	begin
+			if(clk'event and clk = '1') then
+				if(latch_dataout_0 = '1') then
+					dataout_0_reg <= dataout_0_sig;
+				end if;
+				if(latch_dataout_1 = '1') then
+					dataout_1_reg <= dataout_1_sig;
+				end if;
+			end if;
+  	    	end process;
+	
+            	dataout_0 <= dataout_0_reg when (latch_dataout_0 = '0') else dataout_0_sig;
+            	dataout_1 <= dataout_1_reg when (latch_dataout_1 = '0') else dataout_1_sig;
+            
+          end block mb;
+	end generate cutFound;
+
+end improved_struct;
 ------------------------------------------------------------------------------------------------
 --
 -- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
@@ -9690,6 +11104,35 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+library ahir;
+use ahir.mem_component_pack.all;
+entity base_bank_r_wrap  is
+   generic ( name: string:="mem"; g_addr_width: natural := 5; 
+	     g_data_width : natural := 20);
+   port (datain : in std_logic_vector(g_data_width-1 downto 0);
+         dataout: out std_logic_vector(g_data_width-1 downto 0);
+         addrin: in std_logic_vector(g_addr_width-1 downto 0);
+         enable: in std_logic;
+         writebar : in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end entity;
+
+architecture WrapRec of base_bank_r_wrap is
+begin
+ ci: base_bank
+	generic map (name => name, g_addr_width => g_addr_width, g_data_width => g_data_width)
+	port map (
+			datain => datain, dataout => dataout, addrin => addrin,
+			enable => enable, writebar => writebar, clk => clk, reset => reset
+		 );
+end WrapRec;
+
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
 library ahir;	
 use ahir.Types.all;	
 use ahir.Subprograms.all;	
@@ -9704,6 +11147,8 @@ library ahir;
 use ahir.Types.all;
 use ahir.MemCutsPackage.all;
 use ahir.mem_ASIC_components.all;
+use ahir.MemcutDescriptionPackage.all;
+use ahir.mem_component_pack.all;
 
 entity base_bank is
    generic ( name: string:="mem"; g_addr_width: natural := 5; 
@@ -9718,75 +11163,128 @@ entity base_bank is
 end entity base_bank;
 
 
-architecture struct of base_bank is
+architecture improved_struct of base_bank is
 
-  -- n_cols contains the required number of columns of available memory cuts
-  -- to build the given memory 
-  constant n_cols: IntegerArray(1 to 4) := find_n_cols(spmem_cut_address_widths, spmem_cut_data_widths, spmem_cut_row_heights, g_addr_width, g_data_width);
+   component base_bank_r_wrap  is
+   generic ( name: string:="mem"; g_addr_width: natural := 5; 
+	     g_data_width : natural := 20);
+   port (datain : in std_logic_vector(g_data_width-1 downto 0);
+         dataout: out std_logic_vector(g_data_width-1 downto 0);
+         addrin: in std_logic_vector(g_addr_width-1 downto 0);
+         enable: in std_logic;
+         writebar : in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+   end component;
 
-  --total_data_width is the size of the resized data 
-  constant total_data_width: integer := find_data_width(spmem_cut_data_widths, n_cols);
-
-  --resized data and addresses
-  signal resized_datain: std_logic_vector(total_data_width-1 downto 0);
-  signal resized_dataout: std_logic_vector(total_data_width-1 downto 0);
-
-  signal latch_dataout : std_logic;
-  signal dataout_reg : std_logic_vector(g_data_width-1 downto 0);
+	constant best_cut_info: IntegerArray(1 to 5) :=
+			find_best_cut (spmem_cut_address_widths, 
+					spmem_cut_data_widths,
+					spmem_cut_row_heights,
+					g_addr_width, g_data_width);
+	constant best_cut_address_width : integer := best_cut_info(2);
+	constant best_cut_data_width    : integer := best_cut_info(3);
+	constant best_cut_nrows         : integer := best_cut_info(4);
+	constant best_cut_ncols         : integer := best_cut_info(5);
+	constant use_side_strip: boolean :=
+			(best_cut_info(1) > 0) and
+					((best_cut_data_width*best_cut_ncols) < g_data_width);
 begin
+	noCutFound: if (best_cut_info(1) <= 0) generate
+		regbb_inst: base_bank_with_registers
+				generic map (name => name & ":regs", g_addr_width => g_addr_width,
+						g_data_width => g_data_width)
+			        port map (
+					datain => datain, dataout => dataout, addrin => addrin,
+						enable => enable, writebar => writebar, clk => clk,
+							reset => reset);
+	end generate noCutFound;
 
-  process(clk, reset)
-  begin
-	if(clk'event and clk = '1') then
-		if(reset = '1') then
-			latch_dataout <= '0';
-		else
-			latch_dataout <= enable and writebar;
-		end if;
-	end if;
-  end process;
+	cutFound: if (best_cut_info(1) > 0) generate
 
-  process (datain)
-  begin
-	resized_datain <= (others=>'0');
-	resized_datain(datain'length-1 downto 0) <= datain;
-  end process;
+           mb: block
+		-- declare array access signals.
+		constant array_addr_width : integer := g_addr_width;
+		constant array_data_width : integer := best_cut_data_width*best_cut_ncols;
 
-  mem_gen: for i in 1 to spmem_cut_address_widths'length generate -- loop to cover all the cuts
-	gen_cols: for j in 0 to n_cols(i)-1 generate -- generate if it's no.of columns 								     -- to be used >=1
-		inst: spmem_column generic map ( name => "row_gen",
-			g_addr_width => g_addr_width,
-			g_base_bank_addr_width => spmem_cut_address_widths(i), 
-			g_base_bank_data_width => spmem_cut_data_widths(i))
-			port map ( datain => resized_datain((j+1)*spmem_cut_data_widths(i)
-				+ col_index(spmem_cut_data_widths, n_cols, i-1)-1 downto j*spmem_cut_data_widths(i)
-				+ col_index(spmem_cut_data_widths, n_cols, i-1)), 
-				
-				dataout => resized_dataout((j+1)*spmem_cut_data_widths(i)
-				+ col_index(spmem_cut_data_widths, n_cols,i-1)-1 downto j*spmem_cut_data_widths(i) 
-				+ col_index(spmem_cut_data_widths, n_cols, i-1)),
-       				
-				addrin => addrin,
-       				enable => enable,
-         			writebar => writebar,
-       				clk => clk,
-         			reset => reset);
+		signal array_datain: std_logic_vector(array_data_width-1 downto 0);
+		signal array_dataout: std_logic_vector(array_data_width-1 downto 0);
 
-	end generate gen_cols;
-  end generate mem_gen;		
+		signal latch_dataout: std_logic;
+		signal dataout_sig, dataout_reg: std_logic_vector(g_data_width-1 downto 0);	
+           begin
+
+		array_datain <= datain (g_data_width-1 downto (g_data_width - array_data_width));
+		dataout_sig (g_data_width-1 downto (g_data_width - array_data_width)) <= array_dataout;
+
+		-- selector array..
+		arrayInst: spmem_selector_array 
+				generic map (name =>  name & ":marray",
+						g_addr_width => array_addr_width,
+						g_data_width => array_data_width,
+						g_base_addr_width => best_cut_address_width,
+						g_base_data_width => best_cut_data_width)
+				port map (
+					datain   =>  array_datain,
+					dataout  =>  array_dataout,
+					addrin   =>  addrin,
+					enable   =>  enable,
+				        writebar =>  writebar,
+					clk => clk,
+					reset => reset);
 
 
-  process (clk, latch_dataout, resized_dataout)
-  begin
-	if(clk'event and clk = '1') then
-		if(latch_dataout = '1') then
-			dataout_reg <= resized_dataout(dataout'length-1 downto 0);
-		end if;
-	end if;
-  end process;
-  dataout <= dataout_reg when (latch_dataout = '0') else resized_dataout(dataout'length-1 downto 0);
+		genSideStrip : if use_side_strip generate
+		  sb: block
+			signal sstrip_datain: std_logic_vector((g_data_width - array_data_width)-1 downto 0);
+			signal sstrip_dataout: std_logic_vector((g_data_width - array_data_width)-1 downto 0);
+		  begin
 
-end struct;
+			sstrip_datain <= datain((g_data_width-array_data_width)-1 downto 0);
+			dataout_sig ((g_data_width-array_data_width)-1 downto 0) <= sstrip_dataout;
+
+			side_strip_inst: component base_bank_r_wrap
+				generic map (name => name & ":sstrip", 
+						g_addr_width => g_addr_width,
+						g_data_width => (g_data_width - array_data_width))
+			        port map (
+					datain => sstrip_datain, 
+					dataout => sstrip_dataout, 
+					addrin => addrin,
+					enable => enable, 
+					writebar => writebar, 
+					clk => clk,
+					reset => reset);
+
+		   end block sb;
+		end generate genSideStrip;
+
+  	    	process(clk, reset)
+  	    	begin
+			if(clk'event and clk = '1') then
+				if(reset = '1') then
+					latch_dataout <= '0';
+				else
+					latch_dataout <= enable and writebar;
+				end if;
+			end if;
+  	    	end process;
+	
+      	    	process (clk, latch_dataout, dataout_sig)
+  	    	begin
+			if(clk'event and clk = '1') then
+				if(latch_dataout = '1') then
+					dataout_reg <= dataout_sig(dataout'length-1 downto 0);
+				end if;
+			end if;
+  	    	end process;
+	
+            	dataout <= dataout_reg when (latch_dataout = '0') else dataout_sig;
+            
+          end block mb;
+	end generate cutFound;
+
+end improved_struct;
 ------------------------------------------------------------------------------------------------
 --
 -- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
@@ -9829,15 +11327,17 @@ use ahir.Subprograms.all;
 use ahir.mem_function_pack.all;
 use ahir.memory_subsystem_package.all;
 
+use ahir.MemcutDescriptionPackage.all;
 use ahir.MemCutsPackage.all;
 use ahir.mem_ASIC_components.all;
+use ahir.mem_component_pack.all;
 
 library aHiR_ieee_proposed;
 use aHiR_ieee_proposed.math_utility_pkg.all;
 use aHiR_ieee_proposed.float_pkg.all;
 
 entity dpmem_column is
-   generic ( name: string:="DPRAM_16x4"; 
+   generic (name: string:="dpmem_column"; 
 	g_addr_width: natural := 2;
 	g_base_bank_addr_width: natural:=4; 
 	g_base_bank_data_width : natural := 4);
@@ -9868,12 +11368,8 @@ architecture struct of dpmem_column is
   signal resized_addrin_0: std_logic_vector(resized_addr_width-1 downto 0);  
   signal resized_addrin_1: std_logic_vector(resized_addr_width-1 downto 0);  
 
-  signal ZZZ_1 : std_logic;
-
 begin
 
-  ZZZ_1 <= '0';
-  
   process (addrin_0, addrin_1)
 	begin 
 		resized_addrin_0 <= (others => '0');
@@ -9882,53 +11378,18 @@ begin
 		resized_addrin_1(addrin_1'length-1 downto 0) <= addrin_1;
   end process;
 	
-  -- if only one cut is required to satisfy the address width
-  n_rows_1: if (n_rows = 1) generate
-	row_1_blk: block
-	  signal enb_0 : std_logic;
-	  signal enb_1: std_logic;
-	begin 
-	  process (enable_0, reset, clk)
-	    begin
-		enb_0 <= not (enable_0 and not(reset));
- 	  end process;
-	  process (enable_1, reset, clk)
-	    begin 
-		enb_1 <= not (enable_1 and not(reset));
-	  end process;
- 
-	  mem_inst: dpmem_selector generic map (address_width => g_base_bank_addr_width,
-				data_width => g_base_bank_data_width )
-		port map(A1 => resized_addrin_0 (g_base_bank_addr_width-1 downto 0),
-			A2 => resized_addrin_1 (g_base_bank_addr_width-1 downto 0),
-			CE1 => clk,
-			CE2 => clk,
-			WEB1 => writebar_0,
-			WEB2 => writebar_1,
-			OEB1 => ZZZ_1,
-			OEB2 => ZZZ_1,
-			CSB1 => enb_0,
-			CSB2 => enb_1,
-			I1 => datain_0,
-			I2 => datain_1,
-			O1 => dataout_0,
-			O2 => dataout_1 );
-	end block row_1_blk;
-  end generate n_rows_1;
-	
-  --if more than one cuts are required to satisfy the address width
-  n_rows_gt_1: if (n_rows > 1) generate
-	row_gt_1_blk: block
+  rowgen_block : block
 	  signal decoded_CSB_0, decoded_CSB_0_d: std_logic_vector(n_rows-1 downto 0):= (others=>'1');
 	  signal decoded_CSB_1, decoded_CSB_1_d: std_logic_vector(n_rows-1 downto 0):= (others=>'1');
 	  
   	   signal dataout_array_0 : WordArray(n_rows-1 downto 0);
   	   signal dataout_array_1 : WordArray(n_rows-1 downto 0);
-	  --chipselect is made low only when enable is high and reset is low.
-	  --memory will not be read or written when enable is low.
+
 	begin
 	  process(enable_0, resized_addrin_0, clk, reset)
-	  	variable decoded_CSB_0_var: std_logic_vector(2**Maximum(0, g_addr_width-g_base_bank_addr_width)-1 downto 0):= (others=>'1');
+	  	variable decoded_CSB_0_var: 
+			std_logic_vector(2**Maximum(0, g_addr_width-g_base_bank_addr_width)-1 downto 0):= 
+								(others=>'1');
 	    begin
 		if (enable_0 = '1' and reset = '0') then
 		  decoded_CSB_0_var := MemDecoder(resized_addrin_0(resized_addr_width-1
@@ -9945,7 +11406,9 @@ begin
 	  end process;
 	  
 	  process(enable_1, resized_addrin_1,  clk, reset)
-	  	variable decoded_CSB_1_var: std_logic_vector(2**Maximum(0, g_addr_width-g_base_bank_addr_width)-1 downto 0):= (others=>'1');
+	  	variable decoded_CSB_1_var: 
+			std_logic_vector(2**Maximum(0, g_addr_width-g_base_bank_addr_width)-1 downto 0)
+										:= (others=>'1');
 	    begin
 		if (enable_1 = '1' and reset = '0') then
 		  decoded_CSB_1_var := MemDecoder(resized_addrin_1(resized_addr_width-1
@@ -9962,20 +11425,17 @@ begin
 	  row_gen: for j in 0 to n_rows-1 generate
 		mem_inst: dpmem_selector generic map(address_width => g_base_bank_addr_width,
 					data_width => g_base_bank_data_width )
-			port map(A1 => resized_addrin_0 (g_base_bank_addr_width-1 downto 0),
-			A2 => resized_addrin_1 (g_base_bank_addr_width-1 downto 0),
-			CE1 => clk,
-			CE2 => clk,
-			WEB1 => writebar_0,
-			WEB2 => writebar_1,
-			OEB1 => ZZZ_1,
-			OEB2 => ZZZ_1,
-			CSB1 => decoded_CSB_0(j),
-			CSB2 => decoded_CSB_1(j),
-			I1 => datain_0,
-			I2 => datain_1,
-			O1 => dataout_array_0(j),
-			O2 => dataout_array_1(j) );
+		port map(ADDR_0 => resized_addrin_0 (g_base_bank_addr_width-1 downto 0),
+			 ADDR_1 => resized_addrin_1 (g_base_bank_addr_width-1 downto 0),
+			 ENABLE_0_BAR => decoded_CSB_0(j),
+			 ENABLE_1_BAR => decoded_CSB_1(j),
+			 WRITE_0_BAR  => writebar_0,
+			 WRITE_1_BAR  => writebar_1,
+			 DATAIN_0 => datain_0,
+			 DATAIN_1 => datain_1,
+			 DATAOUT_0 => dataout_array_0(j),
+			 DATAOUT_1 => dataout_array_1(j),
+			 CLK => clk, RESET => reset );
 	  end generate row_gen;
 
 	-- muxes.
@@ -10001,9 +11461,101 @@ begin
 		end loop;
 		dataout_1 <= sel_data_var;
 	  end process;
-	end block;
-  end generate n_rows_gt_1;
+  end block rowgen_block;
 end struct;
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+-------------------------------------------------------------------------------------------------
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library ahir;
+use ahir.Types.all;
+use ahir.MemCutsPackage.all;
+use ahir.mem_ASIC_components.all;
+use ahir.MemcutDescriptionPackage.all;
+use ahir.mem_component_pack.all;
+
+entity dpmem_selector_array is
+   generic ( name: string:="mem";
+		 g_addr_width: natural := 5; 
+	      	 g_data_width : natural := 20;
+		 g_base_addr_width: natural := 5; 
+	      	 g_base_data_width : natural := 20
+	   );
+   port (datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         dataout_0: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         writebar_0 : in std_logic;
+	 datain_1 : in std_logic_vector(g_data_width-1 downto 0);
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         writebar_1 : in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end entity;
+
+architecture Struct of dpmem_selector_array is
+	constant NCOLS : integer := (g_data_width/g_base_data_width);
+begin
+	assert((NCOLS*g_base_data_width) = g_data_width) report
+		"In " & name & " g_data_width is not an exact multiple of g_base_data_width" 
+			severity FAILURE;
+
+	CGEN: for COL in 0 to NCOLS-1 generate
+	     sel_inst: dpmem_column
+		generic map (g_addr_width => g_addr_width,
+				g_base_bank_addr_width => g_base_addr_width,
+				g_base_bank_data_width => g_base_data_width)
+			port map (
+				datain_0  => datain_0(((COL+1)*g_base_data_width)-1 downto (COL*g_base_data_width)),
+				dataout_0 => dataout_0(((COL+1)*g_base_data_width)-1 downto (COL*g_base_data_width)),
+         			addrin_0 => addrin_0,
+         			enable_0 => enable_0,
+         			writebar_0 => writebar_0,
+				datain_1  => datain_1(((COL+1)*g_base_data_width)-1 downto (COL*g_base_data_width)),
+				dataout_1 => dataout_1(((COL+1)*g_base_data_width)-1 downto (COL*g_base_data_width)),
+         			addrin_1 => addrin_1,
+         			enable_1 => enable_1,
+         			writebar_1 => writebar_1,
+         			clk => clk,
+         			reset => reset);
+	end generate CGEN;
+end Struct;
+
 ------------------------------------------------------------------------------------------------
 --
 -- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
@@ -10037,6 +11589,48 @@ end struct;
 -- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
 --------------------------------------------------------------------------------------------------
 
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+entity spram_generic_reverse_wrapper is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR : in std_logic_vector(address_width-1 downto 0 );
+		CLK : in std_logic;
+		WRITE_BAR: in std_logic;
+		ENABLE_BAR: in std_logic;
+		DATAIN  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT  : out std_logic_vector(data_width-1 downto 0));
+end entity spram_generic_reverse_wrapper;
+
+architecture XilinxBramInfer of spram_generic_reverse_wrapper is
+  type MemArray is array (natural range <>) of std_logic_vector(data_width-1 downto 0);
+  signal mem_array : MemArray((2**address_width)-1 downto 0) := (others => (others => '0'));
+begin  -- XilinxBramInfer
+
+  -- read/write process
+  process(CLK, ADDR, ENABLE_BAR, WRITE_BAR)
+  begin
+
+    -- synch read-write memory
+    if(CLK'event and CLK ='1') then
+      if(ENABLE_BAR = '0' and WRITE_BAR = '0') then
+        mem_array(To_Integer(unsigned(ADDR))) <= DATAIN;
+      end if;
+    end if;
+  end process;
+
+  -- read data.
+  process(clk) 
+  begin
+	if(clk'event and clk = '1') then
+		if(ENABLE_BAR = '0') then
+		 	DATAOUT  <= mem_array(To_Integer(unsigned(ADDR)));
+		end if;
+	end if;
+  end process;
+
+end XilinxBramInfer;
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -10044,44 +11638,146 @@ use ieee.numeric_std.all;
 
 library ahir;
 use ahir.mem_ASIC_components.all;
+use ahir.GlobalConstants.all;
+use ahir.mem_component_pack.all;
 
 -- Entity to instantiate different available memory cuts based on the 
 -- address_width and data_width generics passed.
-entity dpmem_selector is
+entity dpram_generic_reverse_wrapper is
 	generic(address_width: integer:=8; data_width: integer:=8);
-	port (A1 : in std_logic_vector(address_width-1 downto 0 );
-	A2 : in std_logic_vector(address_width-1 downto 0 );
-	CE1 : in std_logic;
-	CE2 : in std_logic;
-	WEB1: in std_logic;
-	WEB2: in std_logic;
-	OEB1: in std_logic;
-	OEB2: in std_logic;
-	CSB1: in std_logic;
-	CSB2: in std_logic;
-	I1  : in std_logic_vector(data_width-1 downto 0);
-	I2  : in std_logic_vector(data_width-1 downto 0);
-	O1  : out std_logic_vector(data_width-1 downto 0);
-	O2  : out std_logic_vector(data_width-1 downto 0));
-end entity dpmem_selector;
+	port (ADDR_0 : in std_logic_vector(address_width-1 downto 0 );
+		ADDR_1 : in std_logic_vector(address_width-1 downto 0 );
+		ENABLE_0_BAR : in std_logic;
+		ENABLE_1_BAR : in std_logic;
+		WRITE_0_BAR : in std_logic;
+		WRITE_1_BAR : in std_logic;
+		DATAIN_0  : in std_logic_vector(data_width-1 downto 0);
+		DATAIN_1  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT_0  : out std_logic_vector(data_width-1 downto 0);
+		DATAOUT_1  : out std_logic_vector(data_width-1 downto 0);
+		CLK: in std_logic);
+end entity dpram_generic_reverse_wrapper;
 
-architecture behave of dpmem_selector is
 
-begin
+architecture XilinxBramInfer of dpram_generic_reverse_wrapper is
 
-  c1: if (address_width = 4 and data_width = 4) generate 
-	u1: DPRAM_16x4 port map(A1, A2, CE1, CE2, WEB1, WEB2, OEB1, OEB2, CSB1, CSB2, I1, I2, O1, O2);
-	end generate;
+  type MemArray is array (natural range <>) of std_logic_vector(data_width-1 downto 0);
 
-  c2: if (address_width = 4 and data_width = 8) generate 
-	u1: obc11_dpram_16x8 port map(A1, A2, CE1, CE2, WEB1, WEB2, OEB1, OEB2, CSB1, CSB2, I1, I2, O1, O2);
-	end generate;
+begin  -- XilinxBramInfer
+  genVivado: if global_use_vivado_bbank_dual_port generate
+    gVblock: block
+	signal ena, enb, wea, web: std_logic;
+    begin
+	ena <= not ENABLE_0_bAR;
+	enb <= not ENABLE_1_bAR;
+	wea <= not WRITE_0_BAR;
+	web <= not WRITE_1_BAR;
 
-  c3: if (address_width = 5 and data_width = 8) generate
-	u1: DPRAM_32x8 port map(A1, A2, CE1, CE2, WEB1, WEB2, OEB1, OEB2, CSB1, CSB2, I1, I2, O1, O2);
-	end generate;
+	bbVivado: base_bank_dual_port_for_vivado
+		generic map (name => "bbVivado", g_addr_width => address_Width, g_data_width => data_width)
+		port map (
+			clka => clk, 
+			clkb => clk, 
+			ena => ena,
+			enb => enb,
+			wea => wea,
+			web => web,
+			addra => ADDR_0,
+			addrb => ADDR_1,
+			dia => DATAIN_0,
+			dib => DATAIN_1,
+			doa => DATAOUT_0,
+			dob => DATAOUT_1
+		);
+      end block;
+  end generate genVivado;
 
-end behave;
+  noGenVivado: if not global_use_vivado_bbank_dual_port generate
+  bbNoGen: block
+  	signal mem_array : MemArray((2**address_width)-1 downto 0) := (others => (others => '0'));
+  begin
+  -- read/write process
+  process(CLK, ADDR_0, ENABLE_0_BAR, WRITE_0_BAR, ADDR_1, ENABLE_1_BAR, WRITE_1_BAR)
+  begin
+
+
+    -- synch read-write memory
+    if(CLK'event and CLK ='1') then
+
+      -- both ports write.. second one wins if writes
+      -- are to the same address.
+      if(ENABLE_0_BAR = '0' and WRITE_0_BAR = '0') then
+        mem_array(To_Integer(unsigned(ADDR_0))) <= DATAIN_0;
+      end if;
+      if(ENABLE_1_BAR = '0' and WRITE_1_BAR = '0') then
+        mem_array(To_Integer(unsigned(ADDR_1))) <= DATAIN_1;
+      end if;
+    end if;
+  end process;
+      	
+  process(clk) 
+  begin
+	if(clk'event and clk = '1') then
+		if(ENABLE_0_BAR = '0') then
+  			DATAOUT_0 <= mem_array(To_Integer(unsigned(ADDR_0)));
+		end if;
+		if(ENABLE_1_BAR = '0') then
+  			DATAOUT_1 <= mem_array(To_Integer(unsigned(ADDR_1)));
+		end if;
+	end if;
+  end process;
+  end block;
+  end generate noGenVivado;
+  
+end XilinxBramInfer;
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+entity register_file_1w_1r_generic_reverse_wrapper is
+	generic(address_width: integer:=8; data_width: integer:=8);
+	port (ADDR_0 : in std_logic_vector(address_width-1 downto 0 );
+		ADDR_1 : in std_logic_vector(address_width-1 downto 0 );
+		ENABLE_0_BAR : in std_logic;
+		ENABLE_1_BAR : in std_logic;
+		DATAIN_0  : in std_logic_vector(data_width-1 downto 0);
+		DATAOUT_1  : out std_logic_vector(data_width-1 downto 0);
+		CLK: in std_logic);
+end entity;
+
+architecture XilinxBramInfer of register_file_1w_1r_generic_reverse_wrapper is
+
+  type MemArray is array (natural range <>) of std_logic_vector(data_width-1 downto 0);
+  signal mem_array : MemArray((2**address_width)-1 downto 0) := (others => (others => '0'));
+
+begin  -- XilinxBramInfer
+
+  -- read/write process
+  process(CLK, ADDR_0, ENABLE_0_BAR, ADDR_1, ENABLE_1_BAR)
+  begin
+
+    -- synch read-write memory
+    if(CLK'event and CLK ='1') then
+
+      -- port 0 writes.
+      if(ENABLE_0_BAR = '0') then
+        mem_array(To_Integer(unsigned(ADDR_0))) <= DATAIN_0;
+      end if;
+    end if;
+  end process;
+      	
+  process(clk) 
+  begin
+	if(clk'event and clk = '1') then
+		if(ENABLE_1_BAR = '0') then
+  			DATAOUT_1 <= mem_array(To_Integer(unsigned(ADDR_1)));
+		end if;
+	end if;
+  end process;
+
+end XilinxBramInfer;
+
 ------------------------------------------------------------------------------------------------
 --
 -- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
@@ -10124,15 +11820,509 @@ use ahir.Subprograms.all;
 use ahir.mem_function_pack.all;
 use ahir.memory_subsystem_package.all;
 
+use ahir.MemcutDescriptionPackage.all;
+use ahir.MemCutsPackage.all;
+use ahir.mem_component_pack.all;
+use ahir.mem_ASIC_components.all;
+use ahir.MemcutDescriptionPackage.all;
+
+library aHiR_ieee_proposed;
+use aHiR_ieee_proposed.math_utility_pkg.all;
+use aHiR_ieee_proposed.float_pkg.all;
+
+entity register_file_1w_1r_column is
+   generic ( name: string:="register_file_1w_1r_column"; 
+	g_addr_width: natural := 2;
+	g_base_bank_addr_width: natural:=4; 
+	g_base_bank_data_width : natural := 4);
+   port (datain_0 : in std_logic_vector(g_base_bank_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         dataout_1: out std_logic_vector(g_base_bank_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end entity register_file_1w_1r_column;
+
+
+architecture struct of register_file_1w_1r_column is
+
+  --finding the number of row-replications in the column being build
+  constant n_rows: integer := 2**(Maximum(0, g_addr_width - g_base_bank_addr_width));
+  type WordArray is array  ( natural range <> ) of std_logic_vector (g_base_bank_data_width-1 downto 0);
+
+  --fixing the size of address to maximum of addr_width, cut_width
+  constant resized_addr_width: integer := Maximum (g_addr_width, g_base_bank_addr_width);
+  
+  signal resized_addrin_0: std_logic_vector(resized_addr_width-1 downto 0);  
+  signal resized_addrin_1: std_logic_vector(resized_addr_width-1 downto 0);  
+
+begin
+
+  
+  process (addrin_0, addrin_1)
+	begin 
+		resized_addrin_0 <= (others => '0');
+		resized_addrin_1 <= (others => '0');
+		resized_addrin_0(addrin_0'length-1 downto 0) <= addrin_0;
+		resized_addrin_1(addrin_1'length-1 downto 0) <= addrin_1;
+  end process;
+	
+  rowgen_block: block
+
+	  signal decoded_CSB_0, decoded_CSB_0_d: std_logic_vector(n_rows-1 downto 0):= (others=>'1');
+	  signal decoded_CSB_1, decoded_CSB_1_d: std_logic_vector(n_rows-1 downto 0):= (others=>'1');
+	  
+  	  signal dataout_array_0 : WordArray(n_rows-1 downto 0);
+  	  signal dataout_array_1 : WordArray(n_rows-1 downto 0);
+
+  begin
+	  process(enable_0, resized_addrin_0, clk, reset)
+	  	variable decoded_CSB_0_var: 
+			std_logic_vector(2**Maximum(0, g_addr_width-g_base_bank_addr_width)-1 
+										downto 0):= (others=>'1');
+	  begin
+		if (enable_0 = '1') then
+		  decoded_CSB_0_var := MemDecoder(resized_addrin_0(resized_addr_width-1
+		  					downto resized_addr_width - Ceil_log2(n_rows)));
+		else 
+		  decoded_CSB_0_var := (others=>'1');
+		end if;
+		
+		decoded_CSB_0 <= decoded_CSB_0_var;
+
+		if(clk'event and clk = '1') then
+			decoded_CSB_0_d <= decoded_CSB_0_var;
+		end if;
+	  end process;
+	  
+	  process(enable_1, resized_addrin_1)
+	  	variable decoded_CSB_1_var: 
+			std_logic_vector(2**Maximum(0, g_addr_width-g_base_bank_addr_width)-1 downto 0)
+							:= (others=>'1');
+	    begin
+		if (enable_1 = '1') then
+		  decoded_CSB_1_var := MemDecoder(resized_addrin_1(resized_addr_width-1
+		  downto resized_addr_width - Ceil_log2(n_rows)));
+		else 
+		  decoded_CSB_1_var := (others=>'1');
+		end if;
+		decoded_CSB_1 <= decoded_CSB_1_var;
+
+		if(clk'event and clk = '1') then
+			decoded_CSB_1_d <= decoded_CSB_1_var;
+		end if;
+	  end process;
+
+	  row_gen: for j in 0 to n_rows-1 generate
+		mem_inst: register_file_1w_1r_selector generic map(address_width => g_base_bank_addr_width,
+					data_width => g_base_bank_data_width )
+			port map(ADDR_0 => resized_addrin_0 (g_base_bank_addr_width-1 downto 0),
+				 ENABLE_0_BAR => decoded_CSB_0(j),
+				 ADDR_1 => resized_addrin_1 (g_base_bank_addr_width-1 downto 0),
+				 ENABLE_1_BAR => decoded_CSB_1(j),
+				 DATAIN_0  => datain_0,
+				 DATAOUT_1 => dataout_array_1(j),
+				 CLK     => clk, 
+				 RESET   => reset);
+	  end generate row_gen;
+
+	-- mux.
+          process(dataout_array_1, decoded_CSB_1_d)
+		variable sel_data_var: std_logic_vector(g_base_bank_data_width-1 downto 0);
+	  begin
+		sel_data_var := (others => '0');
+		for I in 0 to n_rows-1 loop
+			if(decoded_CSB_1_d(I) = '0') then
+				sel_data_var := dataout_array_1(I);
+			end if;
+		end loop;
+		dataout_1 <= sel_data_var;
+	  end process;
+   end block;
+
+
+end struct;
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+------------------------------------------------------------------------------------------------
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+library ahir;
+use ahir.mem_component_pack.all;
+
+entity register_file_1w_1r_port_r_wrap is
+   generic ( name: string; g_addr_width: natural := 10; g_data_width : natural := 16);
+   port (
+	 -- write port 0
+	 datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+	 -- read port 1
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+	
+         clk: in std_logic;
+         reset : in std_logic);
+end entity register_file_1w_1r_port_r_wrap;
+
+architecture RecWrap of register_file_1w_1r_port_r_wrap is
+begin
+	rinst: register_file_1w_1r_port
+		generic map (name => name, g_addr_width => g_addr_width, g_data_width => g_data_width)
+		port map (
+				datain_0 => datain_0,
+				addrin_0 => addrin_0,
+				enable_0 => enable_0,
+				dataout_1 => dataout_1,
+				addrin_1 => addrin_1,
+				enable_1 => enable_1,
+				clk => clk, reset => reset
+			);
+
+end RecWrap;
+
+
+
+
+
+library ahir;
+use ahir.Utilities.all;
+use ahir.GlobalConstants.all;
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library ahir;
+use ahir.Types.all;
+use ahir.GlobalConstants.all;
+use ahir.mem_component_pack.all;
+use ahir.MemCutsPackage.all;
+use ahir.MemcutDescriptionPackage.all;
+use ahir.mem_ASIC_components.all;
+--
+-- synchronous memory with 1 write and 1 read port.
+--
+entity register_file_1w_1r_port is
+   generic ( name: string; g_addr_width: natural := 10; g_data_width : natural := 16);
+   port (
+	 -- write port 0
+	 datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+	 -- read port 1
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+	
+         clk: in std_logic;
+         reset : in std_logic);
+end entity register_file_1w_1r_port;
+
+
+architecture improved_struct of register_file_1w_1r_port is
+   component register_file_1w_1r_port_r_wrap is
+   	generic ( name: string; g_addr_width: natural := 10; g_data_width : natural := 16);
+   	port (
+	 	-- write port 0
+	 	datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         	addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         	enable_0: in std_logic;
+	 	-- read port 1
+         	dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         	addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         	enable_1: in std_logic;
+		
+         	clk: in std_logic;
+         	reset : in std_logic);
+   end component register_file_1w_1r_port_r_wrap;
+	constant best_cut_info: IntegerArray(1 to 5) :=
+			find_best_cut (register_file_1w_1r_cut_address_widths, 
+					register_file_1w_1r_cut_data_widths,
+					register_file_1w_1r_cut_row_heights,
+					g_addr_width, g_data_width);
+	constant best_cut_address_width : integer := best_cut_info(2);
+	constant best_cut_data_width    : integer := best_cut_info(3);
+	constant best_cut_nrows         : integer := best_cut_info(4);
+	constant best_cut_ncols         : integer := best_cut_info(5);
+	constant use_side_strip: boolean :=
+			(best_cut_info(1) > 0) and
+					((best_cut_data_width*best_cut_ncols) < g_data_width);
+begin
+	noCutFound: if (best_cut_info(1) <= 0) generate
+		regbb_inst: register_file_1w_1r_port_with_registers
+				generic map (name => name & ":regs", g_addr_width => g_addr_width,
+						g_data_width => g_data_width)
+			        port map (
+					datain_0 => datain_0, 
+					addrin_0 => addrin_0,
+					enable_0 => enable_0, 
+					dataout_1 => dataout_1, 
+					addrin_1 => addrin_1,
+					enable_1 => enable_1, 
+					clk => clk,
+					reset => reset);
+	end generate noCutFound;
+
+	cutFound: if (best_cut_info(1) > 0) generate
+
+           mb: block
+		-- declare array access signals.
+		constant array_addr_width : integer := g_addr_width;
+		constant array_data_width : integer := best_cut_data_width*best_cut_ncols;
+
+		signal array_datain_0: std_logic_vector(array_data_width-1 downto 0);
+		signal array_dataout_1: std_logic_vector(array_data_width-1 downto 0);
+
+		signal latch_dataout_1: std_logic;
+		
+		signal dataout_1_sig, dataout_1_reg: std_logic_vector(g_data_width-1 downto 0);
+           begin
+
+		array_datain_0 <= datain_0(g_data_width-1 downto (g_data_width - array_data_width));
+		dataout_1_sig (g_data_width-1 downto (g_data_width - array_data_width)) <= array_dataout_1;
+
+
+		-- selector array..
+		arrayInst: register_file_1w_1r_selector_array 
+				generic map (name =>  name & ":marray",
+						g_addr_width => array_addr_width,
+						g_data_width => array_data_width,
+						g_base_addr_width => best_cut_address_width,
+						g_base_data_width => best_cut_data_width)
+				port map (
+					datain_0   =>  array_datain_0,
+					addrin_0   =>  addrin_0,
+					enable_0   =>  enable_0,
+					dataout_1  =>  array_dataout_1,
+					addrin_1   =>  addrin_1,
+					enable_1   =>  enable_1,
+					clk => clk,
+					reset => reset);
+
+
+		genSideStrip : if use_side_strip generate
+		  sb: block
+			signal sstrip_datain_0: std_logic_vector((g_data_width - array_data_width)-1 downto 0);
+			signal sstrip_dataout_1: std_logic_vector((g_data_width - array_data_width)-1 downto 0);
+		  begin
+
+			sstrip_datain_0 <= datain_0((g_data_width-array_data_width)-1 downto 0);
+			dataout_1_sig((g_data_width-array_data_width)-1 downto 0) <= sstrip_dataout_1;
+
+			side_strip_inst: component register_file_1w_1r_port_r_wrap
+				generic map (name => name & ":sstrip", 
+						g_addr_width => g_addr_width,
+						g_data_width => (g_data_width - array_data_width))
+			        port map (
+					datain_0 => sstrip_datain_0, 
+					addrin_0 => addrin_0,
+					enable_0 => enable_0, 
+					dataout_1 => sstrip_dataout_1, 
+					addrin_1 => addrin_1,
+					enable_1 => enable_1, 
+					clk => clk,
+					reset => reset);
+		   end block sb;
+		end generate genSideStrip;
+
+  	    	process(clk, reset)
+  	    	begin
+			if(clk'event and clk = '1') then
+				if(reset = '1') then
+					latch_dataout_1 <= '0';
+				else
+					latch_dataout_1 <= enable_1;
+				end if;
+			end if;
+  	    	end process;
+	
+      	    	process (clk, latch_dataout_1, dataout_1_sig)
+  	    	begin
+			if(clk'event and clk = '1') then
+				if(latch_dataout_1 = '1') then
+					dataout_1_reg <= dataout_1_sig;
+				end if;
+			end if;
+  	    	end process;
+	
+            	dataout_1 <= dataout_1_reg when (latch_dataout_1 = '0') else dataout_1_sig;
+            
+          end block mb;
+	end generate cutFound;
+
+end improved_struct;
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+-------------------------------------------------------------------------------------------------
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library ahir;
+use ahir.Types.all;
 use ahir.MemCutsPackage.all;
 use ahir.mem_ASIC_components.all;
+use ahir.MemcutDescriptionPackage.all;
+use ahir.mem_component_pack.all;
+
+entity register_file_1w_1r_selector_array is
+   generic ( name: string:="mem";
+		 g_addr_width: natural := 5; 
+	      	 g_data_width : natural := 20;
+		 g_base_addr_width: natural := 5; 
+	      	 g_base_data_width : natural := 20
+	   );
+   port (datain_0 : in std_logic_vector(g_data_width-1 downto 0);
+         addrin_0: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_0: in std_logic;
+         dataout_1: out std_logic_vector(g_data_width-1 downto 0);
+         addrin_1: in std_logic_vector(g_addr_width-1 downto 0);
+         enable_1: in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end entity;
+
+architecture Struct of register_file_1w_1r_selector_array is
+	constant NCOLS : integer := (g_data_width/g_base_data_width);
+begin
+	assert((NCOLS*g_base_data_width) = g_data_width) report
+		"In " & name & " g_data_width is not an exact multiple of g_base_data_width" 
+			severity FAILURE;
+
+	CGEN: for COL in 0 to NCOLS-1 generate
+	     sel_inst: register_file_1w_1r_column
+		generic map (g_addr_width => g_addr_width,
+				g_base_bank_addr_width => g_base_addr_width,
+				g_base_bank_data_width => g_base_data_width)
+			port map (
+				datain_0  => datain_0(((COL+1)*g_base_data_width)-1 downto (COL*g_base_data_width)),
+         			addrin_0 => addrin_0,
+         			enable_0 => enable_0,
+				dataout_1 => dataout_1(((COL+1)*g_base_data_width)-1 downto (COL*g_base_data_width)),
+         			addrin_1 => addrin_1,
+         			enable_1 => enable_1,
+         			clk => clk,
+         			reset => reset);
+	end generate CGEN;
+end Struct;
+
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+--------------------------------------------------------------------------------------------------
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library ahir;	
+use ahir.Types.all;	
+use ahir.Subprograms.all;	
+use ahir.mem_function_pack.all;
+use ahir.memory_subsystem_package.all;
+
+use ahir.MemcutDescriptionPackage.all;
+use ahir.MemCutsPackage.all;
+use ahir.mem_ASIC_components.all;
+use ahir.mem_component_pack.all;
 
 library aHiR_ieee_proposed;
 use aHiR_ieee_proposed.math_utility_pkg.all;
 use aHiR_ieee_proposed.float_pkg.all;
 
 entity spmem_column is
-   generic ( name: string:="SPRAM_16x4"; 
+   generic ( name: string:="spmem_column"; 
 	g_addr_width: natural := 2;
 	g_base_bank_addr_width: natural:=4; 
 	g_base_bank_data_width : natural := 4);
@@ -10155,7 +12345,6 @@ architecture struct of spmem_column is
   constant resized_addr_width: integer := Maximum(g_addr_width, g_base_bank_addr_width);
   signal resized_addrin: std_logic_vector(resized_addr_width-1 downto 0);  
   type WordArray is array  ( natural range <> ) of std_logic_vector (g_base_bank_data_width-1 downto 0);
-  signal ZZZ_1 : std_logic := '0';
 
 begin
   process (addrin)
@@ -10164,30 +12353,7 @@ begin
 		resized_addrin(addrin'length-1 downto 0) <= addrin;
   end process;
 	
-  -- if only one cut is required to satisfy the address width
-  n_rows_1: if (n_rows = 1) generate
-	row_1_blk: block
-	  signal enb: std_logic := '1';
-	begin 
-	  process(enable, reset)
-	    begin
-		enb <= not (enable and not(reset));
- 	  end process;
-	  mem_inst: spmem_selector generic map (address_width => g_base_bank_addr_width,
-				data_width => g_base_bank_data_width )
-		port map(A => resized_addrin(g_base_bank_addr_width-1 downto 0),
-			CE => clk,
-			WEB => writebar,
-			OEB => ZZZ_1,
-			CSB => enb,
-			I => datain,
-			O => dataout );
-	end block row_1_blk;
-  end generate n_rows_1;
-	
-  --if more than one cuts are required to satisfy the address width
-  n_rows_gt_1: if (n_rows > 1) generate
-	row_gt_1_blk: block
+  rowgen_block: block
 	  
   	   signal decoded_CSB, decoded_CSB_d: std_logic_vector(n_rows-1 downto 0):= (others=>'1');
   	   signal dataout_array : WordArray(n_rows-1 downto 0);
@@ -10195,10 +12361,11 @@ begin
 	  --chipselect is made low only when enable is high and reset is low.
 	  --memory will not be read or written when enable is low.
 	begin
-	  process(resized_addrin, enable, clk, reset)
-	     variable decoded_CSB_var: std_logic_vector(2**Maximum(0, g_addr_width-g_base_bank_addr_width)-1 downto 0):= (others=>'1');
+	  process(resized_addrin, enable, clk)
+	     variable decoded_CSB_var: std_logic_vector(2**Maximum(0, g_addr_width-g_base_bank_addr_width)-1 
+							downto 0):= (others=>'1');
 	    begin
-		if (enable = '1' and reset = '0') then
+		if (enable = '1') then
 		  decoded_CSB_var := MemDecoder(resized_addrin(resized_addr_width-1
 		  downto resized_addr_width-Ceil_log2(n_rows)));
 		else 
@@ -10213,13 +12380,13 @@ begin
 	  row_gen: for j in 0 to n_rows-1 generate
 		mem_inst: spmem_selector generic map(address_width => g_base_bank_addr_width,
 					data_width => g_base_bank_data_width )
-			port map(A => resized_addrin(g_base_bank_addr_width-1 downto 0),
-				CE => clk,
-				WEB => writebar,
-				OEB => ZZZ_1,
-				CSB => decoded_CSB(j),
-				I => datain,
-				O => dataout_array(j));
+			port map(ADDR => resized_addrin(g_base_bank_addr_width-1 downto 0),
+				 CLK => clk,
+				 RESET => reset,
+				 WRITE_BAR => writebar,
+				 ENABLE_BAR => decoded_CSB(j),
+				 DATAIN => datain,
+				 DATAOUT => dataout_array(j));
 	  end generate row_gen;
 
   	  -- mux.
@@ -10234,8 +12401,7 @@ begin
 		end loop;
 		dataout <= sel_data_var;
 	  end process;
-	end block;
-  end generate n_rows_gt_1;
+   end block;
   
 end struct;
 ------------------------------------------------------------------------------------------------
@@ -10269,450 +12435,591 @@ end struct;
 -- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 -- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 -- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
---------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------
 
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 library ahir;
+use ahir.Types.all;
+use ahir.MemCutsPackage.all;
 use ahir.mem_ASIC_components.all;
+use ahir.MemcutDescriptionPackage.all;
+use ahir.mem_component_pack.all;
 
--- Entity to instantiate different available memory cuts based on the 
--- address_width and data_width generics passed.
-entity spmem_selector is
-	generic(address_width: integer:=8; data_width: integer:=8);
-	port (A : in std_logic_vector(address_width-1 downto 0 );
-	CE : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;
-	CSB: in std_logic;
-	I  : in std_logic_vector(data_width-1 downto 0);
-	O  : out std_logic_vector(data_width-1 downto 0));
-end entity spmem_selector;
+entity spmem_selector_array is
+   generic ( name: string:="mem";
+		 g_addr_width: natural := 5; 
+	      	 g_data_width : natural := 20;
+		 g_base_addr_width: natural := 5; 
+	      	 g_base_data_width : natural := 20
+	   );
+   port (datain : in std_logic_vector(g_data_width-1 downto 0);
+         dataout: out std_logic_vector(g_data_width-1 downto 0);
+         addrin: in std_logic_vector(g_addr_width-1 downto 0);
+         enable: in std_logic;
+         writebar : in std_logic;
+         clk: in std_logic;
+         reset : in std_logic);
+end entity;
 
-architecture behave of spmem_selector is
-
-  signal CEB: std_logic;
-
+architecture Struct of spmem_selector_array is
+	constant NCOLS : integer := (g_data_width/g_base_data_width);
 begin
+	assert((NCOLS*g_base_data_width) = g_data_width) report
+		"In " & name & " g_data_width is not an exact multiple of g_base_data_width" 
+			severity FAILURE;
 
-  c1: if (address_width = 4 and data_width = 4) generate 
-	u1: SPRAM_16x4 port map(A, CE, WEB, OEB, CSB, I, O);
-	end generate;
-
-  c2: if (address_width = 5 and data_width = 16) generate 
-	u1: SPRAM_32_16 port map(A, CE, WEB, OEB, CSB, I, O);
-	end generate;
-
-  c3: if (address_width = 8 and data_width = 8) generate
-	CEB <= not(CE); 
-	u1: obc11_256x8 port map(A, CEB, WEB, OEB, CSB, I, O);
-	end generate;
-
-  c4: if (address_width = 9 and data_width = 24) generate 
-	u1: SPRAM_512x24 port map(A, CE, WEB, OEB, CSB, I, O);
-	end generate;
-
-end behave;
-------------------------------------------------------------------------------------------------
---
--- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
--- All Rights Reserved.
---  
--- Permission is hereby granted, free of charge, to any person obtaining a
--- copy of this software and associated documentation files (the
--- "Software"), to deal with the Software without restriction, including
--- without limitation the rights to use, copy, modify, merge, publish,
--- distribute, sublicense, and/or sell copies of the Software, and to
--- permit persons to whom the Software is furnished to do so, subject to
--- the following conditions:
--- 
---  * Redistributions of source code must retain the above copyright
---    notice, this list of conditions and the following disclaimers.
---  * Redistributions in binary form must reproduce the above
---    copyright notice, this list of conditions and the following
---    disclaimers in the documentation and/or other materials provided
---    with the distribution.
---  * Neither the names of the AHIR Team, the Indian Institute of
---    Technology Bombay, nor the names of its contributors may be used
---    to endorse or promote products derived from this Software
---    without specific prior written permission.
---
--- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
--- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
--- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
--- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
--- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
--- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
--- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
-
-------------------------------------------------------------------------------------------------
-library ieee;
-use ieee.std_logic_1164.all;
-use ieee.numeric_std.all;
-
-entity DPRAM_GENERIC is
-	generic (address_width: integer := 5; data_width: integer := 3);
-	port (A1 : in std_logic_vector(address_width-1 downto 0 );
-	A2 : in std_logic_vector(address_width-1 downto 0 );
-	CE1 : in std_logic;
-	CE2 : in std_logic;
-	WEB1: in std_logic;
-	WEB2: in std_logic;
-	OEB1: in std_logic;
-	OEB2: in std_logic;
-	CSB1: in std_logic;
-	CSB2: in std_logic;
-	I1  : in std_logic_vector(data_width-1 downto 0);
-	I2  : in std_logic_vector(data_width-1 downto 0);
-	O1  : out std_logic_vector(data_width-1 downto 0);
-	O2  : out std_logic_vector(data_width-1 downto 0));
-end entity;
-
-
-architecture XilinxBramInfer of DPRAM_GENERIC is
-  type MemArray is array (natural range <>) of std_logic_vector(data_width-1 downto 0);
-  signal mem_array : MemArray((2**address_width)-1 downto 0) := (others => (others => '0'));
-  signal addr_reg_0 : std_logic_vector(address_width-1 downto 0);
-  signal rd_enable_reg_0 : std_logic;
-  signal addr_reg_1 : std_logic_vector(address_width-1 downto 0);
-  signal rd_enable_reg_1 : std_logic;
-  signal dataout_0, dataout_1 : std_logic_vector(data_width-1 downto 0);
-begin  -- XilinxBramInfer
-
-  -- read/write process
-  process(CE1, A1, CSB1, WEB1, A2, CSB2, WEB2)
-  begin
-
-    -- synch read-write memory
-    if(CE1'event and CE1 ='1') then
-
-      -- register the address
-      -- and use it in a separate assignment
-      -- for the delayed read.
-      addr_reg_0 <= A1;
-      addr_reg_1 <= A2;
-
-	-- generate a registered read enable
-	rd_enable_reg_0 <= not(CSB1) and WEB1;
-	rd_enable_reg_1 <= not(CSB2) and WEB2;
-
-      -- both ports write.. second one wins if writes
-      -- are to the same address.
-      if(CSB1 = '0' and WEB1 = '0') then
-        mem_array(To_Integer(unsigned(A1))) <= I1;
-      end if;
-      if(CSB2 = '0' and WEB2 = '0') then
-        mem_array(To_Integer(unsigned(A2))) <= I2;
-      end if;
-    end if;
-  end process;
-      	
-  -- use the registered read enable with the registered address to 
-  -- describe the read
-  dataout_0 <= mem_array(To_Integer(unsigned(addr_reg_0)));
-  dataout_1 <= mem_array(To_Integer(unsigned(addr_reg_1)));
-
-  O1 <= dataout_0 when (OEB1 = '0') else (others => 'Z');
-  O2 <= dataout_1 when (OEB2 = '0') else (others => 'Z');
-  
-end XilinxBramInfer;
-------------------------------------------------------------------------------------------------
---
--- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
--- All Rights Reserved.
---  
--- Permission is hereby granted, free of charge, to any person obtaining a
--- copy of this software and associated documentation files (the
--- "Software"), to deal with the Software without restriction, including
--- without limitation the rights to use, copy, modify, merge, publish,
--- distribute, sublicense, and/or sell copies of the Software, and to
--- permit persons to whom the Software is furnished to do so, subject to
--- the following conditions:
--- 
---  * Redistributions of source code must retain the above copyright
---    notice, this list of conditions and the following disclaimers.
---  * Redistributions in binary form must reproduce the above
---    copyright notice, this list of conditions and the following
---    disclaimers in the documentation and/or other materials provided
---    with the distribution.
---  * Neither the names of the AHIR Team, the Indian Institute of
---    Technology Bombay, nor the names of its contributors may be used
---    to endorse or promote products derived from this Software
---    without specific prior written permission.
---
--- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
--- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
--- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
--- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
--- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
--- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
--- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
---------------------------------------------------------------------------------------------------
-library ieee;
-use ieee.std_logic_1164.all;
-library ahir;
-use ahir.mem_ASIC_components.all;
- 
-entity SPRAM_16x4 is
-	port(A : in std_logic_vector(3 downto 0 );
-	CE : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;
-	CSB: in std_logic;
-	I  : in std_logic_vector(3 downto 0);
-	O  : out std_logic_vector(3 downto 0));
-end entity;
-
-architecture struct of SPRAM_16x4 is
-begin 
-  
-  inst: SPRAM_GENERIC generic map(address_width => 4, data_width => 4)
-			port map(A, CE, WEB, OEB, CSB, I, O);
-end struct;
+	CGEN: for COL in 0 to NCOLS-1 generate
+	     sel_inst: spmem_column
+		generic map (g_addr_width => g_addr_width,
+				g_base_bank_addr_width => g_base_addr_width,
+				g_base_bank_data_width => g_base_data_width)
+			port map (
+				datain  => datain (((COL+1)*g_base_data_width)-1 downto (COL*g_base_data_width)),
+				dataout => dataout (((COL+1)*g_base_data_width)-1 downto (COL*g_base_data_width)),
+				addrin => addrin,
+				enable  => enable,
+				writebar => writebar,
+				clk => clk, reset => reset);
+	end generate CGEN;
+end Struct;
 
 library ieee;
 use ieee.std_logic_1164.all;
 library ahir;
-use ahir.mem_ASIC_components.all;
-
-entity SPRAM_32_16 is
-	port(A : in std_logic_vector(4 downto 0 );
-	CE : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;	
-	CSB: in std_logic;
-	I  : in std_logic_vector(15 downto 0);
-	O  : out std_logic_vector(15 downto 0));
-end entity;
-
-architecture struct of SPRAM_32_16 is
-begin 
-  
-  inst: SPRAM_GENERIC generic map(address_width => 5, data_width => 16)
-			port map(A, CE, WEB, OEB, CSB, I, O);
-end struct;
-
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity DPRAM_32X8 is
+   port(       QA,QB : out std_logic_vector(7 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(4 downto 0) := TieHighSlvConstant(5);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end entity;
+architecture SimpleWrap of DPRAM_32X8 is 
+begin
+  DPRAM_32X8_wrap_inst: dpram_generic_reverse_wrapper 
+       generic map (address_width => 5, data_width => 8)
+   port map (ADDR_0 => AA, ADDR_1 => AB, CLK => CLKA,  WRITE_0_BAR => WEBA, WRITE_1_BAR => WEBB,   ENABLE_0_BAR => CEBA , ENABLE_1_BAR => CEBB, DATAIN_0 => DA, DATAIN_1 => DB, DATAOUT_0 => QA, DATAOUT_1 => QB);
+end SimpleWrap;
 library ieee;
 use ieee.std_logic_1164.all;
 library ahir;
-use ahir.mem_ASIC_components.all;
-
-entity SPRAM_512x24 is
-	port(A : in std_logic_vector(8 downto 0 );
-	CE : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;
-	CSB: in std_logic;
-	I  : in std_logic_vector(23 downto 0);
-	O  : out std_logic_vector(23 downto 0));
-end entity;
-
-architecture struct of SPRAM_512x24 is
-begin 
-  
-  inst: SPRAM_GENERIC generic map(address_width => 9, data_width => 24)
-			port map(A, CE, WEB, OEB, CSB, I, O);
-end struct;
-
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity DPRAM_256X32 is
+   port(       QA,QB : out std_logic_vector(31 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(31 downto 0) := TieHighSlvConstant(32);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end entity;
+architecture SimpleWrap of DPRAM_256X32 is 
+begin
+  DPRAM_256X32_wrap_inst: dpram_generic_reverse_wrapper 
+       generic map (address_width => 8, data_width => 32)
+   port map (ADDR_0 => AA, ADDR_1 => AB, CLK => CLKA,  WRITE_0_BAR => WEBA, WRITE_1_BAR => WEBB,   ENABLE_0_BAR => CEBA , ENABLE_1_BAR => CEBB, DATAIN_0 => DA, DATAIN_1 => DB, DATAOUT_0 => QA, DATAOUT_1 => QB);
+end SimpleWrap;
 library ieee;
 use ieee.std_logic_1164.all;
 library ahir;
-use ahir.mem_ASIC_components.all;
-
-entity obc11_256x8 is
-	port(A : in std_logic_vector(7 downto 0 );
-	CEB : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;
-	CSB: in std_logic;
-	I  : in std_logic_vector(7 downto 0);
-	O  : out std_logic_vector(7 downto 0));
-end entity;
-
-architecture struct of obc11_256x8 is
-  signal CE: std_logic;
-begin 
-  
-  CE <= not(CEB);
-  inst: SPRAM_GENERIC generic map(address_width => 8, data_width => 8)
-			port map(A, CE, WEB, OEB, CSB, I, O);
-end struct;
-
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity DPRAM_2048X8 is
+   port(       QA,QB : out std_logic_vector(7 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(10 downto 0) := TieHighSlvConstant(11);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end entity;
+architecture SimpleWrap of DPRAM_2048X8 is 
+begin
+  DPRAM_2048X8_wrap_inst: dpram_generic_reverse_wrapper 
+       generic map (address_width => 11, data_width => 8)
+   port map (ADDR_0 => AA, ADDR_1 => AB, CLK => CLKA,  WRITE_0_BAR => WEBA, WRITE_1_BAR => WEBB,   ENABLE_0_BAR => CEBA , ENABLE_1_BAR => CEBB, DATAIN_0 => DA, DATAIN_1 => DB, DATAOUT_0 => QA, DATAOUT_1 => QB);
+end SimpleWrap;
 library ieee;
 use ieee.std_logic_1164.all;
 library ahir;
-use ahir.mem_ASIC_components.all;
-
-entity DPRAM_16x4 is
-	port (A1 : in std_logic_vector(3 downto 0 );
-	A2 : in std_logic_vector(3 downto 0 );
-	CE1 : in std_logic;
-	CE2 : in std_logic;
-	WEB1: in std_logic;
-	WEB2: in std_logic;
-	OEB1: in std_logic;
-	OEB2: in std_logic;
-	CSB1: in std_logic;
-	CSB2: in std_logic;
-	I1  : in std_logic_vector(3 downto 0);
-	I2  : in std_logic_vector(3 downto 0);
-	O1  : out std_logic_vector(3 downto 0);
-	O2  : out std_logic_vector(3 downto 0));
-end entity;
-
-architecture struct of DPRAM_16x4 is
-begin 
-  
-  inst: DPRAM_GENERIC generic map(address_width => 4, data_width => 4)
-		port map(A1, A2, CE1, CE2, WEB1, WEB2, OEB1, OEB2, CSB1, CSB2, I1, I2, O1, O2);
-end struct;
-
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity DPRAM_2048X36 is
+   port(       QA,QB : out std_logic_vector(35 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(10 downto 0) := TieHighSlvConstant(11);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(35 downto 0) := TieHighSlvConstant(36);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end entity;
+architecture SimpleWrap of DPRAM_2048X36 is 
+begin
+  DPRAM_2048X36_wrap_inst: dpram_generic_reverse_wrapper 
+       generic map (address_width => 11, data_width => 36)
+   port map (ADDR_0 => AA, ADDR_1 => AB, CLK => CLKA,  WRITE_0_BAR => WEBA, WRITE_1_BAR => WEBB,   ENABLE_0_BAR => CEBA , ENABLE_1_BAR => CEBB, DATAIN_0 => DA, DATAIN_1 => DB, DATAOUT_0 => QA, DATAOUT_1 => QB);
+end SimpleWrap;
 library ieee;
 use ieee.std_logic_1164.all;
 library ahir;
-use ahir.mem_ASIC_components.all;
-
-entity DPRAM_32x8 is
-	port (A1 : in std_logic_vector(4 downto 0 );
-	A2 : in std_logic_vector(4 downto 0 );
-	CE1 : in std_logic;
-	CE2 : in std_logic;
-	WEB1: in std_logic;
-	WEB2: in std_logic;
-	OEB1: in std_logic;
-	OEB2: in std_logic;
-	CSB1: in std_logic;
-	CSB2: in std_logic;
-	I1  : in std_logic_vector(7 downto 0);
-	I2  : in std_logic_vector(7 downto 0);
-	O1  : out std_logic_vector(7 downto 0);
-	O2  : out std_logic_vector(7 downto 0));
-end entity;
-
-architecture struct of DPRAM_32x8 is
-begin 
-  
-  inst: DPRAM_GENERIC generic map(address_width => 5, data_width => 8)
-		port map(A1, A2, CE1, CE2, WEB1, WEB2, OEB1, OEB2, CSB1, CSB2, I1, I2, O1, O2);
-end struct;
-
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity DPRAM_256X52 is
+   port(       QA,QB : out std_logic_vector(51 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(51 downto 0) := TieHighSlvConstant(52);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end entity;
+architecture SimpleWrap of DPRAM_256X52 is 
+begin
+  DPRAM_256X52_wrap_inst: dpram_generic_reverse_wrapper 
+       generic map (address_width => 8, data_width => 52)
+   port map (ADDR_0 => AA, ADDR_1 => AB, CLK => CLKA,  WRITE_0_BAR => WEBA, WRITE_1_BAR => WEBB,   ENABLE_0_BAR => CEBA , ENABLE_1_BAR => CEBB, DATAIN_0 => DA, DATAIN_1 => DB, DATAOUT_0 => QA, DATAOUT_1 => QB);
+end SimpleWrap;
 library ieee;
 use ieee.std_logic_1164.all;
 library ahir;
-use ahir.mem_ASIC_components.all;
-
-entity obc11_dpram_16x8 is
-	port (A1 : in std_logic_vector(3 downto 0 );
-	A2 : in std_logic_vector(3 downto 0 );
-	CE1 : in std_logic;
-	CE2 : in std_logic;
-	WEB1: in std_logic;
-	WEB2: in std_logic;
-	OEB1: in std_logic;
-	OEB2: in std_logic;
-	CSB1: in std_logic;
-	CSB2: in std_logic;
-	I1  : in std_logic_vector(7 downto 0);
-	I2  : in std_logic_vector(7 downto 0);
-	O1  : out std_logic_vector(7 downto 0);
-	O2  : out std_logic_vector(7 downto 0));
-end entity;
-
-architecture struct of obc11_dpram_16x8 is
-begin 
-  
-  inst: DPRAM_GENERIC generic map(address_width => 4, data_width => 8)
-		port map(A1, A2, CE1, CE2, WEB1, WEB2, OEB1, OEB2, CSB1, CSB2, I1, I2, O1, O2);
-end struct;
-
-------------------------------------------------------------------------------------------------
---
--- Copyright (C) 2010-: Madhav P. Desai, Ch. V. Kalyani
--- All Rights Reserved.
---  
--- Permission is hereby granted, free of charge, to any person obtaining a
--- copy of this software and associated documentation files (the
--- "Software"), to deal with the Software without restriction, including
--- without limitation the rights to use, copy, modify, merge, publish,
--- distribute, sublicense, and/or sell copies of the Software, and to
--- permit persons to whom the Software is furnished to do so, subject to
--- the following conditions:
--- 
---  * Redistributions of source code must retain the above copyright
---    notice, this list of conditions and the following disclaimers.
---  * Redistributions in binary form must reproduce the above
---    copyright notice, this list of conditions and the following
---    disclaimers in the documentation and/or other materials provided
---    with the distribution.
---  * Neither the names of the AHIR Team, the Indian Institute of
---    Technology Bombay, nor the names of its contributors may be used
---    to endorse or promote products derived from this Software
---    without specific prior written permission.
---
--- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
--- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
--- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
--- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
--- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
--- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
--- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
-
-------------------------------------------------------------------------------------------------
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity DPRAM_32X64 is
+   port(       QA,QB : out std_logic_vector(63 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(4 downto 0) := TieHighSlvConstant(5);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(63 downto 0) := TieHighSlvConstant(64);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end entity;
+architecture SimpleWrap of DPRAM_32X64 is 
+begin
+  DPRAM_32X64_wrap_inst: dpram_generic_reverse_wrapper 
+       generic map (address_width => 5, data_width => 64)
+   port map (ADDR_0 => AA, ADDR_1 => AB, CLK => CLKA,  WRITE_0_BAR => WEBA, WRITE_1_BAR => WEBB,   ENABLE_0_BAR => CEBA , ENABLE_1_BAR => CEBB, DATAIN_0 => DA, DATAIN_1 => DB, DATAOUT_0 => QA, DATAOUT_1 => QB);
+end SimpleWrap;
 library ieee;
 use ieee.std_logic_1164.all;
-use ieee.numeric_std.all;
-
-entity SPRAM_GENERIC is
-	generic (address_width: integer := 4; data_width: integer := 4);
-	port(A : in std_logic_vector(address_width-1 downto 0 );
-	CE : in std_logic;
-	WEB: in std_logic;
-	OEB: in std_logic;
-	CSB: in std_logic;
-	I  : in std_logic_vector(data_width-1 downto 0);
-	O  : out std_logic_vector(data_width-1 downto 0));
-end entity;
-
-architecture XilinxBramInfer of SPRAM_GENERIC is
-  type MemArray is array (natural range <>) of std_logic_vector(data_width-1 downto 0);
-  signal mem_array : MemArray((2**address_width)-1 downto 0) := (others => (others => '0'));
-  signal address_reg : std_logic_vector(address_width-1 downto 0);
-  signal rd_enable_reg : std_logic;
-  signal dataout : std_logic_vector(data_width-1 downto 0);
-begin  -- XilinxBramInfer
-
-  -- read/write process
-  process(CE, A, CSB, WEB)
-  begin
-
-    -- synch read-write memory
-    if(CE'event and CE ='1') then
-
-     	-- register the address
-	-- and use it in a separate assignment
-	-- for the delayed read.
-      address_reg <= A;
-
-      rd_enable_reg <= not(CSB) and WEB;
-
-      if(CSB = '0' and WEB = '0') then
-        mem_array(To_Integer(unsigned(A))) <= I;
-      end if;
-    end if;
-  end process;
-      	
-	-- use the registered read enable with the registered address to 
-	-- describe the read
-  dataout <= mem_array(To_Integer(unsigned(address_reg))) when (rd_enable_reg = '1');
-
-  O <= dataout when (OEB = '0') else (others => 'Z');
-end XilinxBramInfer;
-
-
-
-
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity DPRAM_32X4 is
+   port(       QA,QB : out std_logic_vector(3 downto 0);
+      AA,AB,AMA,AMB : in std_logic_vector(4 downto 0) := TieHighSlvConstant(5);
+      DA,DB,DMA,DMB,BWEBA,BWEBB,BWEBMA,BWEBMB : in std_logic_vector(3 downto 0) := TieHighSlvConstant(4);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD, VG, VS  :   IN   std_logic := '1'; --- ????? 
+      BIST  :   IN   std_logic := '1'; --- ????? 
+      AWT:   IN   std_logic := '1'; --- ????? 
+      WTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      RTSEL  :   IN   std_logic_vector(1 downto 0) := "11"; --- ????? 
+      CEBA, CEBB :   IN   std_logic := '1';
+      CEBMA, CEBMB :   IN   std_logic := '1';
+      WEBA, WEBB :   IN   std_logic := '1';
+      WEBMA, WEBMB :   IN   std_logic := '1';
+      CLKA, CLKB, CLKM  :   IN   std_logic := '1');
+  end entity;
+architecture SimpleWrap of DPRAM_32X4 is 
+begin
+  DPRAM_32X4_wrap_inst: dpram_generic_reverse_wrapper 
+       generic map (address_width => 5, data_width => 4)
+   port map (ADDR_0 => AA, ADDR_1 => AB, CLK => CLKA,  WRITE_0_BAR => WEBA, WRITE_1_BAR => WEBB,   ENABLE_0_BAR => CEBA , ENABLE_1_BAR => CEBB, DATAIN_0 => DA, DATAIN_1 => DB, DATAOUT_0 => QA, DATAOUT_1 => QB);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_64X4 is
+   port(       Q : out std_logic_vector(3 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(3 downto 0) := TieHighSlvConstant(4);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_64X4 is 
+begin
+  SRAM_64X4_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 6, data_width => 4)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_64X32 is
+   port(       Q : out std_logic_vector(31 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(31 downto 0) := TieHighSlvConstant(32);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_64X32 is 
+begin
+  SRAM_64X32_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 6, data_width => 32)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_256X8 is
+   port(       Q : out std_logic_vector(7 downto 0);
+      A, AM : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      D, DM, BWEB, BWEBM : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_256X8 is 
+begin
+  SRAM_256X8_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 8, data_width => 8)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_256X32 is
+   port(       Q : out std_logic_vector(31 downto 0);
+      A, AM : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      D, DM, BWEB, BWEBM : in std_logic_vector(31 downto 0) := TieHighSlvConstant(32);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_256X32 is 
+begin
+  SRAM_256X32_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 8, data_width => 32)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_8192X8 is
+   port(       Q : out std_logic_vector(7 downto 0);
+      A, AM : in std_logic_vector(12 downto 0) := TieHighSlvConstant(13);
+      D, DM, BWEB, BWEBM : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_8192X8 is 
+begin
+  SRAM_8192X8_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 13, data_width => 8)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_32X32 is
+   port(       Q : out std_logic_vector(31 downto 0);
+      A, AM : in std_logic_vector(4 downto 0) := TieHighSlvConstant(5);
+      D, DM, BWEB, BWEBM : in std_logic_vector(31 downto 0) := TieHighSlvConstant(32);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_32X32 is 
+begin
+  SRAM_32X32_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 5, data_width => 32)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_128X22 is
+   port(       Q : out std_logic_vector(21 downto 0);
+      A, AM : in std_logic_vector(6 downto 0) := TieHighSlvConstant(7);
+      D, DM, BWEB, BWEBM : in std_logic_vector(21 downto 0) := TieHighSlvConstant(22);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_128X22 is 
+begin
+  SRAM_128X22_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 7, data_width => 22)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_1024X8 is
+   port(       Q : out std_logic_vector(7 downto 0);
+      A, AM : in std_logic_vector(9 downto 0) := TieHighSlvConstant(10);
+      D, DM, BWEB, BWEBM : in std_logic_vector(7 downto 0) := TieHighSlvConstant(8);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_1024X8 is 
+begin
+  SRAM_1024X8_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 10, data_width => 8)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_1024X64 is
+   port(       Q : out std_logic_vector(63 downto 0);
+      A, AM : in std_logic_vector(9 downto 0) := TieHighSlvConstant(10);
+      D, DM, BWEB, BWEBM : in std_logic_vector(63 downto 0) := TieHighSlvConstant(64);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_1024X64 is 
+begin
+  SRAM_1024X64_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 10, data_width => 64)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_64X128 is
+   port(       Q : out std_logic_vector(127 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(127 downto 0) := TieHighSlvConstant(128);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_64X128 is 
+begin
+  SRAM_64X128_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 6, data_width => 128)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_64X67 is
+   port(       Q : out std_logic_vector(66 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(66 downto 0) := TieHighSlvConstant(67);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_64X67 is 
+begin
+  SRAM_64X67_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 6, data_width => 67)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_64X24 is
+   port(       Q : out std_logic_vector(23 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(23 downto 0) := TieHighSlvConstant(24);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_64X24 is 
+begin
+  SRAM_64X24_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 6, data_width => 24)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
+library ieee;
+use ieee.std_logic_1164.all;
+library ahir;
+use ahir.mem_component_pack.all;
+use ahir.types.all;
+use ahir.utilities.all;
+entity SRAM_64X90 is
+   port(       Q : out std_logic_vector(89 downto 0);
+      A, AM : in std_logic_vector(5 downto 0) := TieHighSlvConstant(6);
+      D, DM, BWEB, BWEBM : in std_logic_vector(89 downto 0) := TieHighSlvConstant(90);
+      SLP  :   IN   std_logic := '1'; --- ????? 
+      SD   :   IN   std_logic := '1'; --- ????? 
+      WEB  :   IN   std_logic;
+      CEB  :   IN   std_logic;
+      WEBM : in std_logic := '1'; --- ????? 
+      CEBM : in std_logic := '1'; --- ????? 
+      AWT  : in std_logic := '1'; --- ????? 
+      BIST : in std_logic := '1'; --- ????? 
+      CLK:   IN   std_logic);
+  end entity;
+architecture SimpleWrap of SRAM_64X90 is 
+begin
+  SRAM_64X90_wrap_inst: spram_generic_reverse_wrapper 
+       generic map (address_width => 6, data_width => 90)
+   port map (ADDR => A, CLK => CLK, WRITE_BAR => WEB, ENABLE_BAR => CEB, DATAIN => D,  DATAOUT => Q);
+end SimpleWrap;
 ------------------------------------------------------------------------------------------------
 --
 -- Copyright (C) 2010-: Madhav P. Desai
@@ -28425,6 +30732,286 @@ end default_arch;
 -- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
 ------------------------------------------------------------------------------------------------
 -- copyright: Madhav Desai
+--   re-engineered Queue core implementation to improve LUT count and critical path!
+--   Why didn't I think of this before?
+--
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+-- Synopsys DC ($^^$@!)  needs you to declare an attribute
+-- to infer a synchronous set/reset ... unbelievable.
+--##decl_synopsys_attribute_lib##
+
+entity QueueBaseCore is
+  generic(name : string := "Anon"; 
+		queue_depth: integer := 3; 
+		reverse_bypass_flag: boolean := false;
+		data_width: integer := 32);
+  port(clk: in std_logic;
+       reset: in std_logic;
+       empty, full: out std_logic;
+       data_in: in std_logic_vector(data_width-1 downto 0);
+       push_req: in std_logic;
+       push_ack: out std_logic;
+       data_out: out std_logic_vector(data_width-1 downto 0);
+       pop_ack : out std_logic;
+       pop_req: in std_logic);
+end entity QueueBaseCore;
+
+architecture behave of QueueBaseCore is
+
+  type QueueArray is array(natural range <>) of std_logic_vector(data_width-1 downto 0);
+
+-- see comment above..
+--##decl_synopsys_sync_set_reset##
+
+begin  -- SimModel
+
+ pDZero:  if(queue_depth = 0) generate
+
+	empty <= '1';
+	full  <= '1';
+
+	data_out <= data_in;
+
+	push_ack <= pop_req;
+	pop_ack  <= push_req;
+
+ end generate pDZero;
+
+ pDEq1: if (queue_depth = 1) generate
+    bbb1: block
+	signal qsize: std_logic;
+	signal push_ack_sig, pop_ack_sig: std_logic;
+    begin
+   
+
+     	rbpGen1: if (reverse_bypass_flag) generate
+		push_ack_sig <= '1' when (qsize = '0') or (pop_req = '1') else '0';
+     	end generate rbpGen1;
+
+     	noRbpGen1: if (not reverse_bypass_flag) generate
+		push_ack_sig <= '1' when (qsize = '0') else '0';
+     	end generate noRbpGen1;
+		
+	pop_ack_sig  <= '1' when (qsize = '1') else '0';
+
+	full  <= not push_ack_sig;
+	empty <= not pop_ack_sig;
+
+	push_ack <= push_ack_sig;
+	pop_ack <= pop_ack_sig;
+     	ob: block
+        	signal queue_data: std_logic_vector(data_width-1 downto 0);
+     	begin
+		
+		process(clk, reset, data_in, push_req, push_ack_sig, pop_req, pop_ack_sig, qsize, queue_data)
+        		variable next_queue_data: std_logic_vector(data_width-1 downto 0);
+			variable next_qsize: std_logic;
+			variable push, pop: boolean;
+		begin 
+		 	next_qsize := qsize;
+			next_queue_data := queue_data;
+
+			push := (push_req = '1') and (push_ack_sig = '1');
+			pop := (pop_req = '1') and (pop_ack_sig = '1');
+
+			if (push and (not pop)) then
+				next_qsize := '1';
+			elsif (pop and (not push)) then
+				next_qsize := '0';
+			end if;
+
+			if(push) then
+				next_queue_data := data_in;
+			end if;
+
+			if(clk'event and (clk = '1')) then
+				if(reset = '1') then
+					qsize <= '0';
+					queue_data <= (others => '0');
+				else
+					qsize <= next_qsize;
+					queue_data <= next_queue_data;
+				end if;
+			end if;
+		end process;
+
+		data_out <= queue_data;
+     	end block ob;
+    end block bbb1;
+ end generate pDEq1;
+ 
+ pDGOne: if (queue_depth > 1) generate
+
+     lb: block
+     	signal queue_data: QueueArray (0 to queue_depth-1); 
+        signal state_vector: std_logic_vector(queue_depth-1 downto 0);
+        signal reverse_bypass_applicable : boolean;
+	signal push_ack_sig, pop_ack_sig: std_logic;
+	constant Zstatus: std_logic_vector(queue_depth-1 downto 0) := (others => '1');
+     begin
+
+
+	empty <= (not pop_ack_sig);
+	full  <= (not push_ack_sig);
+	
+     	rbpGen: if (reverse_bypass_flag) generate
+
+     		push_ack_sig <= '1' when ((state_vector(queue_depth-1) = '0') or reverse_bypass_applicable) else '0';
+		reverse_bypass_applicable <= (state_vector = Zstatus) and (pop_req = '1');
+     	end generate rbpGen;
+	
+     	noRbpGen: if (not reverse_bypass_flag) generate
+     		push_ack_sig <= '1' when (state_vector(queue_depth-1) = '0')  else '0';
+		reverse_bypass_applicable <= false;
+     	end generate noRbpGen;
+	push_ack <= push_ack_sig;
+
+     	pop_ack_sig <= '1' when state_vector(0) = '1' else '0';
+	pop_ack <= pop_ack_sig;
+
+     	data_out <= queue_data(0);
+
+	-- sequence of stages
+	--   Each stage has the following inputs
+	--        push pop  status(k+1) status(k) status(k-1)
+	--   and performs actions as follows:
+	--  -------------------------------------------------------------------
+	--   status(k+1) status(k) status(k-1)   Action
+	--  -------------------------------------------------------------------
+	--      0           0            0        No action.
+	--      0           0            1        If push.(~pop), then load din 
+	--                                        into stage, set status(k) = 1
+	--                                        Else, nothing.
+	--      0           1            1        If push.pop then load din into
+	--                                        stage, status stays the same.
+	--                                        If (~push).pop set status(k) = 0
+	--                                        Else nothing.
+	--      1           1             1       If pop load data(k+1) into
+	--                                        stage, keep status(k) = 1
+	--                                        Else nothing.
+	--  -------------------------------------------------------------------
+	stageGen: for K in queue_depth-1 downto 0 generate 
+		sb: block
+		   -- signals
+		   signal data_kp1: std_logic_vector(data_width-1 downto 0);
+                   signal status_kp1, status_k, status_km1: std_logic;
+		   signal stat_3 : std_logic_vector(2 downto 0); 
+		   signal push, pop: boolean;
+		begin
+			push <= (push_req = '1') and (push_ack_sig = '1');
+			pop  <= (pop_req = '1')  and (pop_ack_sig  = '1');
+
+			stat_3 (1) <= state_vector(K);
+
+			topGen: if (K = (queue_depth - 1)) generate
+			    cb: block
+                            begin
+				stat_3 (2) <= '0';
+				stat_3 (0) <= state_vector(K-1);
+				data_kp1 <= (others => '0');
+                            end block cb;
+			end generate topGen;
+
+			midGen: if (K < (queue_depth-1)) and (K > 0) generate 
+			    cb: block
+                            begin
+				stat_3 (2) <= state_vector(K+1);
+				stat_3 (0) <= state_vector(K-1);
+				data_kp1 <= queue_data(K+1);
+                            end block cb;
+			end generate midGen;
+
+			botGen: if (K = 0) generate
+			    cb: block
+                            begin
+				stat_3 (2) <= state_vector(K+1);
+				stat_3 (0) <= '1';
+				data_kp1 <= queue_data(K+1);
+                            end block cb;
+			end generate botGen;
+		
+			status_k <= state_vector(K);
+
+			process(clk, reset)
+                   		variable next_status_k_var: std_logic;
+				variable next_stage_data_var: std_logic_vector(data_width-1 downto 0);
+			begin
+				next_status_k_var := status_k;
+				next_stage_data_var := queue_data(K);
+				
+				case stat_3 is
+					when "001" =>
+						if(push and (not pop)) then
+							next_stage_data_var := data_in;
+							next_status_k_var   := '1';
+						end if;
+					when "011" =>
+						if (push and pop) then
+							next_stage_data_var := data_in;
+							next_status_k_var := '1';
+						elsif ((not push) and pop) then
+							next_status_k_var := '0';
+						end if;
+					when "111" =>
+						if pop then
+							next_stage_data_var := data_kp1;
+						end if;
+					when others => null;
+				end case;	
+			
+				if(clk'event and (clk = '1')) then
+					if(reset = '1') then
+						state_vector(K) <= '0';
+						queue_data(K) <= (others => '0');
+					else
+						state_vector(K) <= next_status_k_var;
+						queue_data(K) <= next_stage_data_var;
+					end if;
+				end if;
+			end process;
+		end block sb;
+	end generate stageGen;
+     end block lb;
+ end generate pDGOne;
+
+
+end behave;
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+------------------------------------------------------------------------------------------------
+-- copyright: Madhav Desai
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -29120,6 +31707,152 @@ end BehaviouralFsm;
 ------------------------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library ahir;
+use ahir.BaseComponents.all;
+use ahir.Types.all;
+
+-- Synopsys DC ($^^$@!)  needs you to declare an attribute
+-- to infer a synchronous set/reset ... unbelievable.
+--##decl_synopsys_attribute_lib##
+
+-- Assumption: guard-interface will not change until
+-- sr_in -> sa_out sequence has completed.
+--
+entity SgiUpdateFsm is
+	generic (name: string);
+	port (cr_in: in Boolean;
+		cr_out: out Boolean;
+		ca_in: in Boolean;
+		ca_out: out Boolean;
+		pop_req: out std_logic;
+		pop_ack: in std_logic;
+		pop_data: in std_logic_vector(0 downto 0);
+		clk, reset: in std_logic);
+end entity;
+
+architecture BehaviouralFsm of SgiUpdateFsm is
+
+	type UpdateFsmState is (UpdateFsmRun, UpdateFsmWaitPop, UpdateFsmWaitCain);
+	signal update_fsm_state: UpdateFsmState;
+
+	signal ca_out_d, ca_out_u: boolean;
+
+-- see comment above..
+--##decl_synopsys_sync_set_reset##
+begin
+
+	process(clk, reset, pop_ack, cr_in, ca_in, pop_data, update_fsm_state)
+		variable next_update_fsm_state_var: UpdateFsmState;
+		variable pop_req_var : std_logic;
+		variable cr_out_var, ca_out_d_var, ca_out_u_var: boolean;
+	begin
+		next_update_fsm_state_var := update_fsm_state;
+		pop_req_var := '0';
+		cr_out_var := false;
+		ca_out_d_var := false;
+		ca_out_u_var := false;
+
+		case update_fsm_state is
+			when UpdateFsmRun =>
+				if(cr_in) then
+					pop_req_var := '1';
+					if(pop_ack = '1') then
+						if(pop_data(0) = '0') then
+							ca_out_d_var := true;
+						else
+							cr_out_var := true;
+							next_update_fsm_state_var := UpdateFsmWaitCain;
+						end if;
+					else
+						next_update_fsm_state_var := UpdateFsmWaitPop;
+					end if;
+				end if;
+			when UpdateFsmWaitPop =>
+				pop_req_var := '1';
+				if(pop_ack = '1') then
+					if(pop_data(0) = '0') then
+						ca_out_d_var := true;
+						next_update_fsm_state_var := UpdateFsmRun;
+					else
+						cr_out_var := true;
+						next_update_fsm_state_var := UpdateFsmWaitCain;
+					end if;
+				end if;
+			when UpdateFsmWaitCain =>
+				if(ca_in) then
+					ca_out_u_var := true;
+					if(cr_in) then 
+						pop_req_var := '1';
+						if(pop_ack = '1') then
+							if(pop_data(0) = '0') then
+								ca_out_d_var := true;
+								next_update_fsm_state_var := UpdateFsmRun;
+							else
+								cr_out_var := true;
+							end if;
+						else
+							next_update_fsm_state_var := UpdateFsmWaitPop;
+						end if;
+					else
+						next_update_fsm_state_var := UpdateFsmRun;
+					end if;
+				end if;
+		end case;
+
+		ca_out_u <= ca_out_u_var;
+		cr_out   <= cr_out_var;
+		pop_req  <= pop_req_var;
+
+		if(clk'event and (clk = '1')) then
+			if(reset = '1') then
+				ca_out_d <= false;
+				update_fsm_state <= UpdateFsmRun;
+			else
+				ca_out_d <= ca_out_d_var;
+				update_fsm_state <= next_update_fsm_state_var;
+			end if;
+		end if;
+	end process;
+
+	ca_out <= ca_out_d or ca_out_u;
+end BehaviouralFsm;
+	
+------------------------------------------------------------------------------------------------
+--
+-- Copyright (C) 2010-: Madhav P. Desai
+-- All Rights Reserved.
+--  
+-- Permission is hereby granted, free of charge, to any person obtaining a
+-- copy of this software and associated documentation files (the
+-- "Software"), to deal with the Software without restriction, including
+-- without limitation the rights to use, copy, modify, merge, publish,
+-- distribute, sublicense, and/or sell copies of the Software, and to
+-- permit persons to whom the Software is furnished to do so, subject to
+-- the following conditions:
+-- 
+--  * Redistributions of source code must retain the above copyright
+--    notice, this list of conditions and the following disclaimers.
+--  * Redistributions in binary form must reproduce the above
+--    copyright notice, this list of conditions and the following
+--    disclaimers in the documentation and/or other materials provided
+--    with the distribution.
+--  * Neither the names of the AHIR Team, the Indian Institute of
+--    Technology Bombay, nor the names of its contributors may be used
+--    to endorse or promote products derived from this Software
+--    without specific prior written permission.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+-- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+-- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+-- IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+-- ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+-- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+-- SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
+------------------------------------------------------------------------------------------------
+library ieee;
+use ieee.std_logic_1164.all;
 
 library ahir;
 use ahir.BaseComponents.all;
@@ -29253,7 +31986,7 @@ use ahir.SubPrograms.all;
 -- a special purpose queue which keeps a 1-bit data value.
 --
 entity SingleBitQueueBase is
-  generic(name : string; queue_depth: integer := 1);
+  generic(name : string; queue_depth: integer := 1; bypass_flag: boolean := false);
   port(clk: in std_logic;
        reset: in std_logic;
        data_in: in std_logic_vector(0 downto 0);
@@ -29295,7 +32028,10 @@ begin  -- SimModel
   	signal write_pointer, incr_write_pointer: std_logic_vector(queue_depth-1 downto 0);
   	signal read_pointer, incr_read_pointer: std_logic_vector(queue_depth-1 downto 0);
      	signal queue_size : unsigned ((Ceil_Log2(queue_depth+1))-1 downto 0);
+	signal empty_flag, bypass_active : boolean := false;
+	signal actual_push_req: std_logic;
   begin
+
  
     assert (queue_size < queue_depth) report "Queue " & name & " is full." severity note;
     assert (queue_size < (3*queue_depth/4)) report "Queue " & name & " is three-quarters-full." severity note;
@@ -29307,19 +32043,40 @@ begin  -- SimModel
      incr_write_pointer <= write_pointer;
     end generate qD1;
 
+    byp_gen: if bypass_flag generate
+
+	empty_flag <= (queue_size = 0);
+	bypass_active <= (empty_flag and (push_req = '1'));
+
+	actual_push_req <= '0' when (bypass_active and (pop_req = '1')) else push_req;
+    	pop_ack  <= '1' when ((queue_size > 0) or bypass_active) else '0';
+
+    	data_out(0) <= data_in(0) when bypass_active else
+				OrReduce (queue_vector and read_pointer);
+    end generate byp_gen;
+
+    no_byp_gen: if not bypass_flag generate
+
+	bypass_active <= false;
+	actual_push_req <= push_req;
+    	pop_ack  <= '1' when (queue_size > 0) else '0';
+    
+	-- bottom pointer gives the data in FIFO mode..
+    	data_out(0) <= OrReduce (queue_vector and read_pointer);
+
+    end generate no_byp_gen;
+
     qDG1: if (queue_depth > 1) generate
      incr_read_pointer <= rotate_left(read_pointer);
      incr_write_pointer <= rotate_left(write_pointer);
     end generate qDG1;
 
     push_ack <= '1' when (queue_size < queue_depth) else '0';
-    pop_ack  <= '1' when (queue_size > 0) else '0';
 
-    -- bottom pointer gives the data in FIFO mode..
-    data_out(0) <= OrReduce (queue_vector and read_pointer);
   
     -- single process
-    process(clk, reset, read_pointer, write_pointer, incr_read_pointer, incr_write_pointer, queue_size, push_req, pop_req)
+    process(clk, reset, read_pointer, write_pointer, incr_read_pointer, incr_write_pointer, queue_size, 
+			actual_push_req, pop_req)
       variable qsize : unsigned ((Ceil_Log2(queue_depth+1))-1 downto 0);
       variable push,pop : boolean;
       variable next_read_ptr,next_write_ptr : std_logic_vector(queue_depth-1 downto 0);
@@ -29331,11 +32088,11 @@ begin  -- SimModel
       next_read_ptr := read_pointer;
       next_write_ptr := write_pointer;
       
-      if((qsize < queue_depth) and push_req = '1') then
+      if((qsize < queue_depth) and (actual_push_req = '1')) then
           push := true;
       end if;
   
-      if((qsize > 0) and pop_req = '1') then
+      if((qsize > 0) and (pop_req = '1') and (not bypass_active)) then
           pop := true;
       end if;
   
@@ -29349,6 +32106,7 @@ begin  -- SimModel
       end if;
   
   
+      -- queue size modified only in non-bypass case
       if(pop and (not push)) then
           qsize := qsize - 1;
       elsif(push and (not pop)) then
@@ -29566,9 +32324,6 @@ architecture Behave of SplitGuardInterfaceBase is
   -- for debug purposes only
   signal s_counter, c_counter: integer;
 
-  signal ca_out_d, ca_out_u: Boolean;
-
-
   -- number of stages!  This will cause
   -- the minimum latency of sr -> ca to
   -- increase to this number...  Be careful..
@@ -29583,12 +32338,14 @@ architecture Behave of SplitGuardInterfaceBase is
 --##decl_synopsys_sync_set_reset##
 
 begin
-	ca_out <= ca_out_d or ca_out_u;
-
 	qdata_in(0) <= guard_interface;
 
-	qI: ShiftRegisterSingleBitQueue  -- dont bypass.. combinational cycle alert!
-		generic map(name => name & "-qI", queue_depth => buffering, number_of_stages => g_queue_number_of_stages)
+	qI: ShiftRegisterSingleBitQueue  -- bypass to maintain delays
+		generic map(name => name & "-qI", 
+					queue_depth => buffering, 
+					number_of_stages => g_queue_number_of_stages,
+					bypass_flag => true
+			   )
 		port map(clk => clk, reset => reset,
 				data_in => qdata_in,
 				push_req => push,
@@ -29605,6 +32362,7 @@ begin
 			port map (clk => clk, reset => reset,
 					sr_in => sr_in, sr_in_q => sr_in_q,
 					push_req => push, push_ack => push_ack);
+
 
 	-- Race condition in PHI statements can be an issue!
 	process(clk, reset, guard_interface, sr_in)
@@ -29625,156 +32383,21 @@ begin
 	-- sa_out
 	sa_out <= sr_in_q when (guard_interface_sustained = '0') else sa_in;
 
-
-	-- RHS State machine.
-	------------------------------------------------------------------------------------------
-        --   Present-state  cr_in  pop_ack      qdata        ca_in    Nstate  cr_out  ca_out  pop
-	------------------------------------------------------------------------------------------
-	--   r_Idle          0        _           _            _      r_Idle
-	--   r_Idle          1        0           _            _      W-Queue                  1
-	--   r_Idle          1        1           1            _      W-Ack-In  1              1
-	--   r_Idle          1        1           0            _      r_Idle           1d      1
-	--      Note: ca_in is never expected to be asserted in the idle state.
-	------------------------------------------------------------------------------------------
-        --   Present-state  cr_in  pop_ack      qdata        ca_in    Nstate  cr_out  ca_out  pop
-	------------------------------------------------------------------------------------------
-	--   W-Queue         _        0           _            _      W-Queue                  1
-	--   W-Queue         1        1           0            _      W-Queue          1       1
-	--   W-Queue         0        1           0            _      r-Idle           1       1
-	--   W-Queue         0        1           1            1      r_Idle    1      1       1
-	--   W-Queue         1        1           1            1      W_Queue   1      1       1
-	--   W-Queue         _        1           1            0      W-Ack-In  1              1
-	--      Note: cr_in will be asserted only if ca_out is asserted.
-	------------------------------------------------------------------------------------------
-        --   Present-state  cr_in  pop_ack      qdata        ca_in    Nstate  cr_out  ca_out  pop
-	------------------------------------------------------------------------------------------
-	--   W-Ack-In        _        _           _            0      W-Ack-In  
-	--   W-Ack-In        1        1           1            1      W-Ack-In  1       1      1
-	--   W-Ack-In        1        1           0            1      r_Idle            1,1d   1
-	--   W-Ack-In        1        0           _            1      W-Queue           1      1
-	--   W-Ack-In        0        _           _            1      r_Idle            1  
-	--	Note: cr_in will be asserted only if ca_out is asserted.
-	--            ca_out-u will be asserted only on ca_in.
-	--            ca-out-d can depend on cr_in.
-	------------------------------------------------------------------------------------------
-	process(clk,cr_in,pop_ack,qdata,ca_in,rhs_state,reset, c_counter)
-		variable nstate : RhsState;
-		variable ca_out_u_var : Boolean;
-		variable ca_out_d_var : Boolean;
-		variable cr_out_var : Boolean;
-		variable next_c_counter: integer;
-	begin
-		nstate := rhs_state;
-		pop <= '0';
-		cr_out_var := false;
-		ca_out_u_var := false;
-		ca_out_d_var := false;
-		next_c_counter := c_counter;
-
-		case rhs_state is
-			when r_Idle =>
-				if cr_in then
-					pop <= '1';
-					--
-					-- what happens if ca_in appears immediately?
-					-- not permitted in this state.
-					--	
-					if(pop_ack = '0') then
-						nstate := r_Wait_On_Queue;			
-					else
-						if(qdata(0) = '1') then
-							cr_out_var := true;
-							nstate := r_Wait_On_Ack_In;
-							next_c_counter := (next_c_counter + 1);
-						else
-							ca_out_d_var := true;
-							nstate := r_Idle;
-						end if;
-					end if;
-				end if;
-			when r_Wait_On_Queue =>
-				pop <= '1';
-				if(pop_ack = '1') then
-					if(qdata(0) = '0') then
-						ca_out_u_var := true;
-						if(cr_in) then
-							nstate := r_Wait_On_Queue;
-						else
-							nstate := r_Idle;
-						end if;
-					else 
-						cr_out_var := true;
-						if(ca_in) then	
-							ca_out_u_var := true;
-						end if;
-
-						if(cr_in and ca_in) then
-							nstate := r_Wait_On_Queue;
-						elsif ((not cr_in) and ca_in)  then
-							nstate := r_Idle;
-						elsif (not ca_in) then
-							nstate := r_Wait_On_Ack_In;
-						end if;
-					
-						next_c_counter := (next_c_counter + 1);
-					end if;
-				end if;
-			when r_Wait_On_Ack_In =>
-				-- assumption: there is at least a unit delay from cr_out -> ca_in.
-				if(ca_in) then 
-					ca_out_u_var := true;
-					if(cr_in  and (pop_ack = '1') and (qdata(0) = '1')) then
-						pop <= '1';
-						cr_out_var := true;
-						next_c_counter := (next_c_counter + 1);
-					elsif(cr_in and (pop_ack = '1') and (qdata(0) = '0')) then
-						nstate := r_Idle;
-						ca_out_d_var := true;
-						pop <= '1';
-					elsif(cr_in and (pop_ack = '0')) then
-						pop <= '1';
-						nstate := r_Wait_On_Queue;
-					elsif(not cr_in) then
-						nstate := r_Idle;
-					end if;
-				end if;
-		end case;
-
-		-- done separately below.
-		--   Xilinx xst optimization seems to be imperfect
-		--   and we need to help it out.
-		--
-		-- ca_out_u <= ca_out_u_var;
-		-- cr_out <= cr_out_var;
-
-		if(clk'event and clk = '1') then
-			if(reset = '1') then
-				rhs_state <= r_Idle;
-				ca_out_d <= false;
-				c_counter <= 0;
-			else
-				ca_out_d <= ca_out_d_var;
-				rhs_state <= nstate;
-				c_counter <= next_c_counter;
-			end if;
-		end if;
-	end process;
-
-
-	-- Mealy outputs (to ensure that xst doesn't screw up.)
-	cr_out <=  (((rhs_state = r_Idle) and cr_in and (pop_ack = '1') and (qdata(0) = '1')) 
-				or
-			 ((rhs_state = r_Wait_On_Queue) and (pop_ack = '1') and (qdata(0) = '1'))
-				or
-			  ((rhs_state = r_Wait_On_Ack_In) and ca_in and 
-						cr_in and (pop_ack = '1') and (qdata(0) = '1')));
-
-	ca_out_u <= (((rhs_state = r_Wait_On_Queue) and (pop_ack = '1') and (qdata(0) = '0'))
-				or
-			 ((rhs_state = r_Wait_On_Queue) and (pop_ack = '1') and (qdata(0) = '1') and ca_in)
-				or
-			 ((rhs_state = r_Wait_On_Ack_In) and ca_in));
-
+	-----------------------------------------------------------------------------------------------
+	-- update side logic.
+	-----------------------------------------------------------------------------------------------
+	updateFsm: SgiUpdateFsm
+			generic map 
+				 (name => name & "-update-fsm")
+			port map (clk => clk,
+					reset => reset,
+					cr_in => cr_in,
+					cr_out => cr_out,
+					ca_in => ca_in,
+					ca_out => ca_out,
+					pop_req => pop,
+					pop_ack => pop_ack,
+					pop_data => qdata);
 
 end Behave;
 ------------------------------------------------------------------------------------------------
@@ -30099,18 +32722,29 @@ architecture Behave of SplitUpdateGuardInterfaceBase is
 	Type FsmState is (Idle, Busy);
 	signal fsm_state: FsmState;
 	signal ca_out_u, ca_out_d: Boolean;
-	signal sampled_guard_interface: std_logic;
+	signal guard_interface_reg, sampled_guard_interface: std_logic;
 -- see comment above..
 --##decl_synopsys_sync_set_reset##
 begin
+	sa_out <= sr_in;
+	sr_out <= false;
 		
 	-- sr/sa interface is a dummy... no need to forward to the
-	sa_out <= sr_in;
+	process (clk, reset, sr_in)
+	begin
+		if(clk'event and (clk = '1')) then
+			if(reset = '1') then
+				guard_interface_reg <= '0';
+			elsif sr_in then
+				guard_interface_reg <= guard_interface;
+			end if;
+		end if;
+	end process;
+	sampled_guard_interface <= guard_interface when sr_in else guard_interface_reg;
 
-	sr_out <= false;
 
 	-- update guard FSM.
-	process(clk, guard_interface, fsm_state, cr_in, ca_in)
+	process(clk, sampled_guard_interface, fsm_state, cr_in, ca_in)
 		variable next_state : FsmState;
 		variable cr_out_var, ca_out_var_d, ca_out_var_u: Boolean;
 	begin
@@ -30121,7 +32755,7 @@ begin
 		case fsm_state is
 			when Idle =>
 				if(cr_in) then
-					if(guard_interface  = '1') then
+					if(sampled_guard_interface  = '1') then
 						cr_out_var := true;
 						next_state := Busy;
 					else
@@ -30133,7 +32767,7 @@ begin
 				if(ca_in) then
 					ca_out_var_u := true;
 					if(cr_in) then
-						if(guard_interface = '1') then
+						if(sampled_guard_interface = '1') then
 							cr_out_var := true;
 						else
 							ca_out_var_d := true;
@@ -31846,7 +34480,7 @@ use ahir.GlobalConstants.all;
 -- often good enough.
 --
 entity ShiftRegisterSingleBitQueue is
-  generic(name : string; queue_depth: integer; number_of_stages: integer);
+  generic(name : string; queue_depth: integer; number_of_stages: integer; bypass_flag: boolean := false);
   port(clk: in std_logic;
        reset: in std_logic;
        data_in: in std_logic_vector(0 downto 0);
@@ -31876,7 +34510,7 @@ begin  -- SimModel
      stageGen: for I in 0 to number_of_stages-1 generate
 	qinst: SingleBitQueueBase 
 		generic map (name => name & "-stageGen-qinst-" & Convert_To_String(I),
-				queue_depth => stage_depth)
+				queue_depth => stage_depth, bypass_flag => bypass_flag)
 		port map ( reset => reset, clk => clk, 
 				data_in => intermediate_data(I to I),
 				push_req => intermediate_lr_req(I),
@@ -32088,7 +34722,7 @@ begin  -- SimModel
 
         assert (g_depth > 0) report "SquashLevelRepeater:" & name & " depth must be > 0" severity error;
 
-	-- if enable is low, we stuff the data-in else we stuff in the
+	-- if enable is high, we stuff the data-in else we stuff in the
 	-- last data seen..  (ie, hold it.)
  	nontriv: if (g_depth > 0) generate
         	data_regs(0) <= data_in when (enable = '1') else data_regs(1);

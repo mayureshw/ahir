@@ -666,6 +666,7 @@ vc_CPPipelinedForkBlock[vcCPBlock* cp, vcModule* m]
  	( vc_CPFork[fb] ) |
  	( vc_CPJoin[fb] ) | 
  	( vc_CPMarkedJoin[fb] ) | 
+	( vc_CPSccArc [fb]   ) | 
  	( cpe = vc_CPTransition[fb] { fb->Add_CPElement(cpe);} ) |
  	(vc_AttributeSpec[fb])  
  )* RBRACE
@@ -695,7 +696,9 @@ vc_CPPipelinedLoopBody[vcCPBlock* cp]
             ( vc_CPPhiSequencer[fb]) |
             ( vc_CPTransitionMerge[fb]) |
  	    ( vc_CPAlias[fb] ) | 
-            (vc_AttributeSpec[fb]) )* RBRACE
+ 	    ( vc_CPSccArc[fb] ) | 
+            (vc_AttributeSpec[fb]) 
+ )* RBRACE
 { cp->Add_CPElement(fb); fb->Set_Pipeline_Parent(fb);}
 ( LPAREN ( internal_id = vc_Identifier { fb->Add_Exported_Input(internal_id);})* RPAREN ) 
 ( LPAREN ( internal_id = vc_Identifier { fb->Add_Exported_Output(internal_id);})* RPAREN ) 
@@ -703,7 +706,7 @@ vc_CPPipelinedLoopBody[vcCPBlock* cp]
 
 
 //-----------------------------------------------------------------------------------------------
-// vc_CPJoin: (vc_Identifier | EXIT | ENTRY | NULL) JOIN LPAREN  ENTRY? (vc_Identifier)+  RPAREN
+// vc_CPJoin: (vc_Identifier | EXIT | ENTRY | NULL) JOIN LPAREN  ENTRY? EXIT? (vc_Identifier)+  RPAREN
 //-----------------------------------------------------------------------------------------------
 vc_CPJoin[vcCPForkBlock* fb]
 {
@@ -715,13 +718,16 @@ vc_CPJoin[vcCPForkBlock* fb]
 	(je:EXIT {lbl = je->getText();}) | 
 	(jen:ENTRY {lbl = jen->getText();}) |
 	(jnull:N_ULL {lbl = jnull->getText();})
-   ) JOIN  LPAREN (e:ENTRY {join_ids.push_back(e->getText());})?
+   ) JOIN  
+   LPAREN 
+	(e:ENTRY {join_ids.push_back(e->getText());})?
+	(ee:EXIT {join_ids.push_back(ee->getText());})?
 (b =  vc_Identifier {join_ids.push_back(b);})* RPAREN
  {fb->Add_Join_Point(lbl,join_ids);}
 ;
 
 //-----------------------------------------------------------------------------------------------
-// vc_CPMarkedJoin: (vc_Identifier | EXIT | NULL) MARKEDJOIN LPAREN  ENTRY? (vc_Identifier)+  RPAREN
+// vc_CPMarkedJoin: (vc_Identifier | EXIT | NULL) MARKEDJOIN LPAREN  ENTRY? EXIT? (vc_Identifier)+  RPAREN
 //-----------------------------------------------------------------------------------------------
 vc_CPMarkedJoin[vcCPPipelinedForkBlock* fb]
 {
@@ -736,10 +742,31 @@ vc_CPMarkedJoin[vcCPPipelinedForkBlock* fb]
 ((lbl = vc_Identifier) | 
 	(je:ENTRY {lbl = je->getText();}) |
 	(jnull:N_ULL {lbl = jnull->getText();})
-	) MARKEDJOIN  LPAREN (e:ENTRY {join_ids.push_back(e->getText());} 
+	) MARKEDJOIN  LPAREN 
+		(e:ENTRY {join_ids.push_back(e->getText());} 
                   me:UINTEGER {join_markings.push_back(atoi(me->getText().c_str()));})?
+		(ee:EXIT {join_ids.push_back(ee->getText());} 
+                  mee:UINTEGER {join_markings.push_back(atoi(mee->getText().c_str()));})?
 (b =  vc_Identifier {join_ids.push_back(b);} be:UINTEGER {join_markings.push_back(atoi(be->getText().c_str())); } )* RPAREN
  {fb->Add_Marked_Join_Point(lbl,join_ids, join_markings);}
+;
+
+//-----------------------------------------------------------------------------------------------
+// vc_CPSccArc: vc_Identifier SCC_ARC vc_Identifier
+//-----------------------------------------------------------------------------------------------
+vc_CPSccArc[vcCPBlock* fb]
+{
+	string tail_lbl;
+	string head_lbl;
+}
+:
+	SCC_ARC
+	((tail_lbl = vc_Identifier) | (ENTRY {tail_lbl = "$entry";}) | (EXIT {tail_lbl = "$exit";}))
+	IMPLIES
+	((head_lbl = vc_Identifier) | (ENTRY {head_lbl = "$entry";}) | (EXIT {head_lbl = "$exit";}))
+	{
+		fb->Add_Scc_Arc (tail_lbl, head_lbl);
+	}
 ;
 
 //-----------------------------------------------------------------------------------------------
@@ -2010,6 +2037,7 @@ CUT_THROUGH: "$cut_through";
 GATED_CLOCK:"$gated_clock";
 USE_GATED_CLOCK: "$use_gated_clock";
 
+SCC_ARC: "$scc_arc";
 // data format
 UINTEGER          : DIGIT (DIGIT)*;
 
@@ -2036,11 +2064,8 @@ HEXSTRING    : '_' 'h' (DIGIT | 'a' | 'b' | 'c' | 'd' | 'e' | 'f')+;
 
 QUOTED_STRING : '"' (ALPHA | DIGIT | '_' | ' ' | '.' | '\t' )* '"';
 
-// Scope-id
-// HIERARCHICAL_IDENTIFIER : ':' (SIMPLE_IDENTIFIER)? ':' SIMPLE_IDENTIFIER ;
-
 // Identifiers
-SIMPLE_IDENTIFIER options {testLiterals=true;} : ALPHA (ALPHA | DIGIT | '_')*; 
+SIMPLE_IDENTIFIER options {testLiterals=true;} : ALPHA (ALPHA | DIGIT | '_' | '.')*; 
 
 // base
 protected ALPHA: 'a'..'z'|'A'..'Z';

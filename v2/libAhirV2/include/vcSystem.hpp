@@ -47,6 +47,8 @@ class vcModule;
 class vcConstantWire;
 class vcValue;
 class vcPipe;
+class vcTransition;
+
 class vcSystem: public vcRoot
 {
   map<string, vcMemorySpace*> _memory_space_map;
@@ -86,9 +88,11 @@ class vcSystem: public vcRoot
 
   static bool _uses_function_library;
   static set<string> _non_ahir_function_library_libs;
+  static vector<pair<vcTransition*, vcTransition*> > _scc_arcs;
 
   static string _top_entity_name;
   static int _estimated_buffering_bits;
+  static int _number_of_marked_arcs_saved;
 
   static int _bypass_stride;
   static bool _generate_hsys_file;

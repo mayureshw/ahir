@@ -610,7 +610,7 @@ package BaseComponents is
   -- a special purpose queue which keeps a 1-bit data value.
   --
   component SingleBitQueueBase is
-    generic(name : string; queue_depth: integer := 1);
+    generic(name : string; queue_depth: integer := 1; bypass_flag: boolean := false);
     port(clk: in std_logic;
        reset: in std_logic;
        data_in: in std_logic_vector(0 downto 0);
@@ -677,7 +677,7 @@ package BaseComponents is
 
 
   component ShiftRegisterSingleBitQueue is
-    generic(name : string; queue_depth: integer; number_of_stages: integer);
+    generic(name : string; queue_depth: integer; number_of_stages: integer; bypass_flag: boolean := false);
     port(clk: in std_logic;
        reset: in std_logic;
        data_in: in std_logic_vector(0 downto 0);
@@ -1908,6 +1908,18 @@ package BaseComponents is
 		clk, reset: in std_logic);
   end component;
 
+  component SgiUpdateFsm is
+	generic (name: string);
+	port (cr_in: in Boolean;
+		cr_out: out Boolean;
+		ca_in: in Boolean;
+		ca_out: out Boolean;
+		pop_req: out std_logic;
+		pop_ack: in std_logic;
+		pop_data: in std_logic_vector(0 downto 0);
+		clk, reset: in std_logic);
+  end component;
+
   component SplitGuardInterface is
 	generic (name: string;
 	     		nreqs: integer; buffering: IntegerArray; use_guards: BooleanArray;
@@ -2505,7 +2517,35 @@ package BaseComponents is
         clk : in std_logic;
         reset: in std_logic);
   end component UnloadBufferDeep;
+  component UnloadBufferOptimized is
+    generic (name: string; buffer_size: integer ; data_width : integer ; 
+			bypass_flag, nonblocking_read_flag : boolean := false);
+    port ( write_req: in std_logic;
+        write_ack: out std_logic;
+        write_data: in std_logic_vector(data_width-1 downto 0);
+        unload_req: in boolean;
+        unload_ack: out boolean;
+        read_data: out std_logic_vector(data_width-1 downto 0);
+	has_data: out std_logic;
+        clk : in std_logic;
+        reset: in std_logic);
+  end component UnloadBufferOptimized;
   component UnloadBufferRevised is
+    generic (name: string; 
+		buffer_size: integer ; 
+		data_width : integer ; 
+		bypass_flag: boolean := false);
+    port ( write_req: in std_logic;
+        write_ack: out std_logic;
+        write_data: in std_logic_vector(data_width-1 downto 0);
+        unload_req: in boolean;
+        unload_ack: out boolean;
+        read_data: out std_logic_vector(data_width-1 downto 0);
+	has_data: out std_logic;
+        clk : in std_logic;
+        reset: in std_logic);
+  end component;
+  component UnloadBufferRevisedNonblocking is
     generic (name: string; 
 		buffer_size: integer ; 
 		data_width : integer ; 
@@ -2537,6 +2577,19 @@ package BaseComponents is
   end component UnloadRegister;
 
   component UnloadFsm is
+  generic (name: string; data_width: integer);
+  port ( 
+	 write_req: in std_logic;
+         write_ack: out std_logic;
+         unload_req: in boolean;
+         unload_ack: out boolean;
+	 data_in :  in std_logic_vector(data_width-1 downto 0);
+	 data_out :  out std_logic_vector(data_width-1 downto 0);
+         clk : in std_logic;
+         reset: in std_logic);
+  end component;
+
+  component UnloadFsmNoblock is
   generic (name: string; data_width: integer);
   port ( 
 	 write_req: in std_logic;
@@ -2706,7 +2759,7 @@ package BaseComponents is
   end component module_clock_gate;
 
   component signal_clock_gate is
-	port (reset, clock_enable, clock_in: in std_logic; clock_out : out std_logic);
+	port (reset, clock_in, clock_enable: in std_logic; clock_out : out std_logic);
   end component signal_clock_gate;
 
   component clock_gater is

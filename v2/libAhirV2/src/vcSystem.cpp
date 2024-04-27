@@ -64,6 +64,7 @@ int vcSystem::_bypass_stride = 1;
 // uses library?
 bool vcSystem::_uses_function_library = false;
 set<string> vcSystem::_non_ahir_function_library_libs;
+vector<pair<vcTransition*, vcTransition*> > vcSystem::_scc_arcs;
 
 // set on error.
 bool vcSystem::_error_flag = false;
@@ -84,6 +85,7 @@ string vcSystem::_vhdl_work_library = "work";
 string vcSystem::_tool_name;
 string vcSystem::_top_entity_name = "ahir_system";
 int    vcSystem::_estimated_buffering_bits = 0;
+int    vcSystem::_number_of_marked_arcs_saved = 0;
 
 
 vcSystem::vcSystem(string id):vcRoot(id)
@@ -490,6 +492,8 @@ void vcSystem::Print_VHDL_Global_Package(ostream& ofile)
   string sys_package = this->Get_Sys_Package_Name();
   ofile << "library ieee;" << endl
 	<< "use ieee.std_logic_1164.all;" << endl;
+  ofile << "use ieee.numeric_std.all;" << endl;
+
   ofile << "package " << sys_package << " is -- { " << endl;
   this->Print_VHDL_Constant_Declarations(ofile);
   if(vcSystem::_vhdl_work_library != "work")
@@ -1335,6 +1339,7 @@ void  vcSystem::Print_VHDL_Inclusions(ostream& ofile)
 
   ofile << "library ieee;\n\
 use ieee.std_logic_1164.all;\n			\
+use ieee.numeric_std.all;\n			\
 library aHiR_ieee_proposed;\n \
 use aHiR_ieee_proposed.math_utility_pkg.all;\n \
 use aHiR_ieee_proposed.fixed_pkg.all;\n \

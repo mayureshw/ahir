@@ -1218,9 +1218,13 @@ void AaModule::Write_VC_Control_Path_Optimized_Base(ostream& ofile)
 			visited_elements.insert(inobj);
 
 			string tname = inobj->Get_VC_Name() + "_update_enable";
+
 			exported_outputs += " " + tname + "_out";
 			place_decls += "$P [" + tname + "] \n";
 			trans_decls += "$T [" + tname + "] ";
+			trans_decls += "\n";
+
+			trans_decls += "$scc_arc " + tname + " => $entry\n";
 			trans_decls += "\n";
 			trans_decls += "$T [" + tname + "_out] \n";
 			trans_decls += tname + " &-> (" + tname + "_out)\n";
@@ -1238,6 +1242,7 @@ void AaModule::Write_VC_Control_Path_Optimized_Base(ostream& ofile)
 				trans_decls += "$null &-> (" + tname_u + ")\n";
 				binding_string += "$bind " + tname_u + " <= " + region_name + " : " + tname_u + "_out\n"; 
 			}
+
 		}
 
 		for(int idx = 0,  fidx = this->Get_Number_Of_Output_Arguments(); 
@@ -1249,6 +1254,7 @@ void AaModule::Write_VC_Control_Path_Optimized_Base(ostream& ofile)
 			if(!is_constant)
 			{
 				string tname = outobj->Get_VC_Name() + "_update_enable";
+			
 				exported_inputs += " " + tname + "_in";
 				place_decls += "$P [" + tname + "] \n";
 				trans_decls += "$T [" + tname + "] \n";
@@ -1256,6 +1262,7 @@ void AaModule::Write_VC_Control_Path_Optimized_Base(ostream& ofile)
 				trans_decls += "$null &-> (" + tname + ")\n";
 				trans_decls +=  "$null <-& (" + tname + "_in) \n";
 				trans_decls += "$null &-> (" + tname + ")\n";
+				trans_decls +=  "$scc_arc $exit => " + tname + "\n";
 				// note simplification!
 				trans_decls += tname + " <-& (" + tname + "_in) \n"; // 0-delay, else wasted cycle.
 				binding_string += "$bind " + tname + " => " + region_name + " : " + tname + "_in\n"; 
@@ -1466,4 +1473,27 @@ void AaModule::Get_Accessed_Memory_Spaces(set<AaMemorySpace*>& ms_set)
 		if(cm != this)
 			cm->Get_Accessed_Memory_Spaces(ms_set);
 	}
+}
+
+void AaModule::Update_Pipe_Map(map<AaPipeObject*,vector<AaRoot*> >& pipe_map, AaRoot* r)
+{
+	set<AaPipeObject*>  accessed_pipes;
+	this->Get_Accessed_Pipes(accessed_pipes);
+	for(set<AaPipeObject*>::iterator iter = accessed_pipes.begin(), 
+		fiter = accessed_pipes.end(); iter != fiter; iter++)
+	{
+		pipe_map[*iter].push_back(r);
+	}
+}
+
+void AaModule::Update_Memory_Space_Map(map<AaMemorySpace*,vector<AaRoot*> >& ls_map, AaRoot* r)
+{
+	set<AaMemorySpace*> accessed_memory_spaces;
+	this->Get_Accessed_Memory_Spaces(accessed_memory_spaces);
+	for(set<AaMemorySpace*>::iterator mter = accessed_memory_spaces.begin(), 
+			fmter = accessed_memory_spaces.end(); mter != fmter; mter++)
+	{
+		ls_map[*mter].push_back(r);
+	}
+
 }

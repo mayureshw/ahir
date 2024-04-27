@@ -39,6 +39,7 @@ use ahir.Components.all;
 use ahir.BaseComponents.all;
 use ahir.Subprograms.all;
 use ahir.Utilities.all;
+use ahir.GlobalConstants.all;
 
 --  input port specialized for P2P ports.
 entity InputPort_P2P is
@@ -69,6 +70,10 @@ architecture Base of InputPort_P2P is
   type SampleFsmState is (IDLE, WAITING);
   signal fsm_state: SampleFsmState;
   signal has_data: std_logic;
+
+  -- Don't f-around with this.
+  constant use_unload_register :boolean :=  (not global_use_optimized_unload_buffer) or bypass_flag;
+
 begin
 
     noBarrier: if (not barrier_flag) or nonblocking_read_flag generate
@@ -112,7 +117,8 @@ begin
 				data_width => data_width,
 				   buffer_size => queue_depth, 
 					bypass_flag => bypass_flag,  
-						nonblocking_read_flag => nonblocking_read_flag)
+						use_unload_register => use_unload_register,
+							nonblocking_read_flag => nonblocking_read_flag)
 	port map (write_req => oack, write_ack => oreq, 
 					write_data => odata,
 				unload_req => update_req,

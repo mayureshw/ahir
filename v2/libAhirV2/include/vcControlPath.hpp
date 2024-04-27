@@ -548,6 +548,8 @@ public:
   virtual void Bind(string place_name, string region_name, string transition_name, bool input_binding);
   virtual void Print_VHDL_Bindings(vcControlPath* cp, ostream& ofile);
   void Update_Binding_Predecessor_Successor_Links();
+  
+  virtual void Add_Scc_Arc (string tail_lbl, string head_lbl);
 };
 
 class vcCPSeriesBlock: public vcCPBlock
@@ -934,6 +936,7 @@ public:
   virtual void Eliminate_Redundant_Dependencies();
   virtual void Remove_Redundant_Arcs(map<vcCPElement*,map<vcCPElement*,int> >& distance_map);
   virtual void Remove_Redundant_Reenable_Arcs(map<vcCPElement*,map<vcCPElement*,int> >& distance_map);
+  virtual void Remove_Redundant_Reenable_Arcs_Pass2(map<vcCPElement*,map<vcCPElement*,int> >& distance_map);
 
   void Add_Exported_Input(string internal_id);
   void Add_Exported_Output(string internal_id);
@@ -1242,6 +1245,8 @@ public:
   string Generate_Marked_Join_Bypass_String();
 
   vcCPElement* Get_Top_Element();
+  bool Has_Entry_As_Predecessor ();
+
 
   friend class vcCPElement;
   friend class vcControlPath;
@@ -1400,6 +1405,8 @@ public:
   // ensure correct connectivity.
   bool Check_Group_Graph_Structure();
   void Identify_Strongly_Connected_Components();
+  void Add_To_Reverse_Map(map<vcTransition*, vcCPElementGroup*>& transition_group_map,
+			vcCPElementGroup* g);
 
 };
 
