@@ -114,6 +114,7 @@ class vcSystem: public vcRoot
   void Register_Pipe_Write(string pipe_id, vcModule* m, int idx);
   void Deregister_Pipe_Accesses(vcModule* m);
   int Get_Num_Pipe_Writes(string pipe_id);
+  map<string,vcPipe*>& Get_Pipe_Map() { return _pipe_map; }
   bool Has_Pipe(string pipe_id) 
   {
     return(_pipe_map.find(pipe_id) != _pipe_map.end());
