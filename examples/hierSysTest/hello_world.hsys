@@ -6,12 +6,29 @@ $system Top  $library TopLib
         $out 
 		$pipe B
 {
+
+	$signal $clk EXTCLK_BAR 1 $depth 1
+
 	$pipe TMP $clk => EXTCLK $reset =>  EXTRESET 
         $instance i0  S1:Stage1 
 		$clk => EXTCLK
 		$reset => EXTRESET
 
         $instance i1  S2:Stage2 
-		$clk => EXTCLK
+		$clk => EXTCLK_BAR
 		$reset => EXTRESET
+
+	$thread invertClock
+		$in  $signal  A: $unsigned<1>
+		$out $signal  B: $unsigned<1>
+	$default
+		B := (~ A)
+	<rst_state> {
+		$goto rst_state }
+	$now $tick
+
+
+	$string iClkInst:  invertClock
+		A => EXTCLK
+		B => EXTCLK_BAR
 }

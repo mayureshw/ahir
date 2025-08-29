@@ -49,6 +49,8 @@ package GlobalConstants is
     -- this or deeper pipes with DPRAM.  Note: this is a hack!
     constant global_pipe_shallowness_threshold : integer := 10;  
 
+    -- for debug of memory cuts.
+    constant global_debug_mem_cuts: boolean := false;
 
     -- use the optimized unload buffer implementation if possible.
     -- this saves a substantial amount of logic, but  can result

@@ -7,6 +7,7 @@ FUNCTIONLIB=$(AHIR_RELEASE)/functionLibrary/
 
 all: stages  toplevel  cmodel vhdltb vhdlsim
 toSW: stages toplevel cmodel 
+toVHDL: stages toplevel
 
 # build the lower levels.
 stages:  ./Stage1/stage1.aa ./Stage2/stage2.aa

@@ -1408,6 +1408,7 @@ AaAssignmentStatement::AaAssignmentStatement(AaScope* parent_tpr, AaExpression* 
 	this->_source->Add_Target(this->_target);
 
 	this->_buffering = 1;
+
 }
 
 AaAssignmentStatement::~AaAssignmentStatement() {};
@@ -1743,6 +1744,7 @@ void AaAssignmentStatement::Map_Source_References()
 
 	this->_source->Map_Source_References(this->_source_objects);
 
+
 	if(this->_guard_expression)
 	{
 		this->_guard_expression->Map_Source_References(this->_source_objects);
@@ -2038,6 +2040,7 @@ void AaAssignmentStatement::Write_VC_Datapath_Instances(ostream& ofile)
 						this->Get_Is_Volatile(), // flow-through-flag
 						full_rate,
 						cut_through,
+						false, // in_phi
 						ofile);
 
 
@@ -4983,7 +4986,7 @@ void AaPhiStatement::Write_VC_Datapath_Instances(ostream& ofile)
 				string dpe_name = src_expr->Get_VC_Driver_Name() + "_" + 
 					Int64ToStr(src_expr->Get_Index()) +  "_buf";
 				Write_VC_Interlock_Buffer(dpe_name, src_expr->Get_VC_Driver_Name(),
-						src_driver_name, "", false, full_rate, false, ofile);
+						src_driver_name, "", false, full_rate, false, true, ofile);
 				if(dws != NULL)
 				{
 					int src_buffering = src_expr->Get_Buffering();
@@ -5026,6 +5029,7 @@ void AaPhiStatement::Write_VC_Datapath_Instances(ostream& ofile)
 				true, // flow-through-flag
 				true,
 				false, // cut-through
+				false, // in-phi
 				ofile);
 	}
 	else
@@ -6233,7 +6237,12 @@ void AaDoWhileStatement::Write_VC_Control_Path(bool optimize_flag, ostream& ofil
 		// do not loop-back unless all phi's have used
 		// up their triggering tokens.  Delay introduced
 		ofile << "// do not loop-back unless all phi's have used up their triggering tokens." << endl;
-		__J("condition_evaluated", "aggregated_phi_sample_ack_d");
+		// 
+		// This is redundant, because update ack will always occur
+		// after sample ack.
+		//
+		// __J("condition_evaluated", "aggregated_phi_sample_ack_d");
+		//
 		__J("condition_evaluated", "aggregated_phi_update_ack");
 
 		//
@@ -6334,8 +6343,16 @@ void AaDoWhileStatement::Write_VC_Control_Path(bool optimize_flag, ostream& ofil
 
 	// from condition_evaluated to entry, there is an arc to be used
 	// while computing strongly connected components.
-	ofile << "// SCC arc from condition_evaluated to entry" << endl;
-	ofile << "$scc_arc condition_evaluated => $entry" << endl;
+	// 
+	// This is overly aggressive..  Re-think.
+	//
+	// ofile << "// SCC arc from condition_evaluated to entry" << endl;
+	// ofile << "$scc_arc condition_evaluated => $entry" << endl;
+	//
+	// Note: The invariance of the number of tokens in a loop
+	//       is valid only if the entire cycle is inside a
+	//       fork-join block.
+	//
 
 	ofile << "}"; // end of loop-body.
 	//exports
@@ -6568,7 +6585,8 @@ void AaAssignmentStatement::Update_Adjacency_Map(map<AaRoot*, vector< pair<AaRoo
 	// check if delay not accounted for.
 	if(!this->Get_Is_Volatile())
 	{
-		if(src_expression->Is_Implicit_Variable_Reference())
+		if(src_expression->Is_Implicit_Variable_Reference()
+			|| src_expression->Is_Volatile_Function_Call())
 		{
 			if(tgt_expression->Is_Implicit_Variable_Reference())
 				delay = INTERLOCK_DELAY;

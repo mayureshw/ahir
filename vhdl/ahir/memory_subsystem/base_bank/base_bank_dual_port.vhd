@@ -66,6 +66,14 @@ end entity base_bank_dual_port;
 
 architecture XilinxBramInfer of base_bank_dual_port is
 	signal wea, web: std_logic;
+	signal samplea, sampleb: std_logic;
+
+        signal mdataout_0: std_logic_vector(g_data_width-1 downto 0);
+        signal mdataout_1: std_logic_vector(g_data_width-1 downto 0);
+
+        signal dataout_0_reg: std_logic_vector(g_data_width-1 downto 0);
+        signal dataout_1_reg: std_logic_vector(g_data_width-1 downto 0);
+
 begin  -- XilinxBramInfer
 
   debugGen: if global_debug_flag generate
@@ -75,6 +83,34 @@ begin  -- XilinxBramInfer
 
 	wea <= not writebar_0;
 	web <= not writebar_1;
+
+	process(clk, reset)
+	begin
+		if(clk'event and (clk = '1')) then
+			if(reset = '1') then 
+				samplea <= '0';
+				sampleb <= '0';
+			else
+				samplea <= enable_0 and writebar_0;
+				sampleb <= enable_1 and writebar_1;
+			end if;
+		end if;
+	end process;
+
+	process(clk, reset)
+	begin
+		if(clk'event and (clk = '1')) then
+			if(samplea = '1') then
+				dataout_0_reg <= mdataout_0;
+			end if;
+			if(sampleb = '1') then
+				dataout_1_reg <= mdataout_1;
+			end if;
+		end if;
+	end process;
+
+	dataout_0 <= mdataout_0 when (samplea = '1') else dataout_0_reg;
+	dataout_1 <= mdataout_1 when (sampleb = '1') else dataout_1_reg;
 
 	-- global constant: use_vivado_bbank_dual_port.
 	ifVivado: if global_use_vivado_bbank_dual_port generate
@@ -93,8 +129,8 @@ begin  -- XilinxBramInfer
 					addrb => addrin_1,
 					dia => datain_0,
 					dib => datain_1,
-					doa => dataout_0,
-					dob => dataout_1
+					doa => mdataout_0,
+					dob => mdataout_1
 				);
 	end generate ifVivado;
 
@@ -105,12 +141,12 @@ begin  -- XilinxBramInfer
 						g_data_width => g_data_width)
 				port map (
 	 				datain_0 => datain_0,
-         				dataout_0 => dataout_0,
+         				dataout_0 => mdataout_0,
          				addrin_0 => addrin_0,
          				enable_0 => enable_0,
          				writebar_0 => writebar_0,
 	 				datain_1 => datain_1,
-         				dataout_1 => dataout_1,
+         				dataout_1 => mdataout_1,
          				addrin_1 => addrin_1,
          				enable_1 => enable_1,
          				writebar_1 => writebar_1,

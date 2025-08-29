@@ -47,9 +47,19 @@ use ahir.GlobalConstants.all;
 --  
 --
 -- A more "optimized" version of the old UnloadBuffer.
--- tries to avoid the use of an extra register.  Use
--- when buffer-size > 1.
+-- tries to avoid the use of an extra register.  
 --  
+-- Implements the following invariant.
+--   read_data updated by an unload_ack is
+--   maintained until the next unload_req
+--   is asserted.
+--
+-- Sufficient for normal producer->consumer links.
+--
+-- This should not be used inside interlock buffers
+-- associated with a PHI statement, because RAW
+-- and WAR are suppressed in PHI statement blocks.
+--
 --
 entity UnloadBufferRevised is
 

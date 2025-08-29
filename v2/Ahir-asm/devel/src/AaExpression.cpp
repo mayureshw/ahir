@@ -937,6 +937,7 @@ void AaExpression::Get_Non_Trivial_Source_References(set<AaRoot*>& root_set, set
 				root_set.insert(this);
 			}
 		}
+
 		//
 		//  Possible predicates
 		//       a. this is in a phi
@@ -952,7 +953,12 @@ void AaExpression::Get_Non_Trivial_Source_References(set<AaRoot*>& root_set, set
 		{
 			root_set.insert(stmt);
 		}
-		else if(!this->Is_Flow_Through() && !this->Is_Implicit_Variable_Reference())
+		// flow-through means trivial and intermediate...
+		else if(!this->Is_Flow_Through() &&
+				// volatile function call is flow-through but different.
+				 !this->Is_A_Volatile_Function_Call() && 
+					// implicit means flow-through.
+					 !this->Is_Implicit_Variable_Reference())
 		//  2. if this is not flow-through, no issues.
 		//       insert this if it is serious.
 		{
@@ -962,9 +968,12 @@ void AaExpression::Get_Non_Trivial_Source_References(set<AaRoot*>& root_set, set
 		//  3. if it is intermediate.. hunt its targets down
 		//       it is a flow-through intermediate.
 		//      
-		else if(this->Get_Is_Intermediate())
+		else if(this->Get_Is_Intermediate() || 
+			// This case added later, since it is a bit special.
+					this->Is_A_Volatile_Function_Call())
 		{
-			for(set<AaExpression*>::iterator iter = _targets.begin(), fiter = _targets.end(); iter != fiter; iter++)
+			for(set<AaExpression*>::iterator iter = _targets.begin(), 
+					fiter = _targets.end(); iter != fiter; iter++)
 			{
 				AaExpression* expr = *iter;
 				expr->Get_Non_Trivial_Source_References(root_set, visited_elements);
@@ -3349,6 +3358,7 @@ void AaArrayObjectReference::Write_VC_Datapath_Instances(AaExpression* target, o
 		string src_name = this->Get_VC_Root_Address_Name();
 		string tgt_name = (target != NULL ? target->Get_VC_Receiver_Name() : this->Get_VC_Receiver_Name());
 
+		bool is_in_phi = (this->Get_Associated_Phi_Statement() != NULL);
 		Write_VC_Interlock_Buffer(dpe_name,
 				src_name,
 				tgt_name,
@@ -3356,6 +3366,7 @@ void AaArrayObjectReference::Write_VC_Datapath_Instances(AaExpression* target, o
 				false, // flow-through
 				full_rate, 
 				false, // cut-through
+				is_in_phi, // in_phi
 				ofile);
 
 		//
@@ -4402,6 +4413,7 @@ void AaAddressOfExpression::Write_VC_Datapath_Instances(AaExpression* target, os
 		string src_name = obj_ref->Get_VC_Root_Address_Name();
 		string tgt_name = ((target != NULL) ? target->Get_VC_Receiver_Name() : this->Get_VC_Receiver_Name());
 
+		bool is_in_phi = (this->Get_Associated_Phi_Statement() != NULL);
 		Write_VC_Interlock_Buffer(dpe_name,
 				src_name,
 				tgt_name,
@@ -4409,6 +4421,7 @@ void AaAddressOfExpression::Write_VC_Datapath_Instances(AaExpression* target, os
 				false,
 				full_rate,
 				false, // cut-through
+				is_in_phi, // in-phi
 				ofile);
 
 		this->Write_VC_Output_Buffering(dpe_name, tgt_name, ofile);
@@ -4672,6 +4685,7 @@ void AaTypeCastExpression::Write_VC_Datapath_Instances(AaExpression* target, ost
 
 		if(ilb_flag & (not flow_through))
 		{
+			bool is_in_phi = (this->Get_Associated_Phi_Statement() != NULL);
 			Write_VC_Interlock_Buffer(dpe_name,
 					src_name,
 					tgt_name,
@@ -4679,6 +4693,7 @@ void AaTypeCastExpression::Write_VC_Datapath_Instances(AaExpression* target, ost
 					false,
 					full_rate, 
 					false, // cut-through
+					is_in_phi, // in-phi
 					ofile);
 
 		}
@@ -6047,6 +6062,11 @@ AaFunctionCallExpression::AaFunctionCallExpression
 }
 
 AaFunctionCallExpression::~AaFunctionCallExpression()  {};
+
+bool AaFunctionCallExpression::Is_A_Volatile_Function_Call() 
+{
+	return (this->_called_module->Get_Volatile_Flag());
+}
 
 void AaFunctionCallExpression::Print(ostream& ofile)
 {
