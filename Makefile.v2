@@ -5,19 +5,24 @@
 # LIBS are .a, not to be installed, consumed for build (to be confirmed)
 # .so exist, but have to confirm whether they are to be installed
 
+# Dependencies: boost, antlr2, llvm
+
 PROJECTS	=	AHIRASM HIERSYS LIBAHIR LLVM2AA BITVECS VALUE FNLIB IOLIB VERSION
 
 AHIRASM_DIR	=	Ahir-asm/devel
 AHIRASM_BINS=	Aa2C Aa2VC AaLinkExtMem AaOpt AaPreprocess
 AHIRASM_LIBS=	Aa
+AHIRASM_GRAM=	Aa
 
 HIERSYS_DIR	=	HierSysBuild
 HIERSYS_BINS=	hierSys2C hierSys2Vhdl hierSysCheck hierSysGenVhdlComponentsPackage hierSysPartition hierSysUniquify
 HIERSYS_LIBS=	HierSys
+HIERSYS_GRAM=	hierSys
 
 LIBAHIR_DIR	=	libAhirV2
 LIBAHIR_BINS=	vc2vhdl vcAnalyze vcFormat vcParse vhdlFormat
 LIBAHIR_LIBS=	VC
+LIBAHIR_GRAM=	vc
 
 LLVM2AA_DIR	=	llvmbc2Aa
 LLVM2AA_BINS=	llvm2aa
@@ -41,10 +46,18 @@ VERSION_LIBS=	AhirVersion
 
 BINS	=	$(foreach p,$(PROJECTS), $(addprefix $(value $(p)_DIR)/bin/, $(value $(p)_BINS)))
 LIBS	=	$(foreach p,$(PROJECTS), $(addsuffix .a,$(addprefix $(value $(p)_DIR)/lib/lib, $(value $(p)_LIBS))))
+GRAMS	=	$(foreach p,$(PROJECTS), $(addsuffix .g,$(addprefix $(value $(p)_DIR)/grammar/,$(value $(p)_GRAM))))
 INCDIRS	=	$(foreach p,$(PROJECTS), $(value $(p)_DIR)/include)
 CXXFLAGS+=	$(addprefix -I,$(INCDIRS))
+
+# Convention:
+# For BINS, binary name has a corresponding .cpp program
+# If a project has a single LIB, use all sources, barring those used for BINs to build .a
+# If a project has multiple LIBS, for each source there is corresponding lib
+# We use all include directories for compilation and all libs for linking, to keep it simple
 
 
 all:
 	@echo $(BINS)
 	@echo $(LIBS)
+	@echo $(GRAMS)
