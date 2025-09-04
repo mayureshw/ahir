@@ -1,0 +1,50 @@
+# Pending binaries
+# formatVhdlFiles.py
+# ghdlSanitize.sh
+
+# LIBS are .a, not to be installed, consumed for build (to be confirmed)
+# .so exist, but have to confirm whether they are to be installed
+
+PROJECTS	=	AHIRASM HIERSYS LIBAHIR LLVM2AA BITVECS VALUE FNLIB IOLIB VERSION
+
+AHIRASM_DIR	=	Ahir-asm/devel
+AHIRASM_BINS=	Aa2C Aa2VC AaLinkExtMem AaOpt AaPreprocess
+AHIRASM_LIBS=	Aa
+
+HIERSYS_DIR	=	HierSysBuild
+HIERSYS_BINS=	hierSys2C hierSys2Vhdl hierSysCheck hierSysGenVhdlComponentsPackage hierSysPartition hierSysUniquify
+HIERSYS_LIBS=	HierSys
+
+LIBAHIR_DIR	=	libAhirV2
+LIBAHIR_BINS=	vc2vhdl vcAnalyze vcFormat vcParse vhdlFormat
+LIBAHIR_LIBS=	VC
+
+LLVM2AA_DIR	=	llvmbc2Aa
+LLVM2AA_BINS=	llvm2aa
+
+BITVECS_DIR	=	BitVectors
+BITVECS_LIBS=	BitVectors
+
+VALUE_DIR	=	Value
+VALUE_LIBS	=	Value
+
+FNLIB_DIR	=	functionLibrary
+FNLIB_LIBS	=	fpu llvm_intrinsics timer
+
+IOLIB_DIR	=	iolib
+IOLIB_LIBS	=	io
+
+VERSION_DIR	=	version
+VERSION_LIBS=	AhirVersion
+
+# # # # # Usually no change should be required below this point # # # # #
+
+BINS	=	$(foreach p,$(PROJECTS), $(addprefix $(value $(p)_DIR)/bin/, $(value $(p)_BINS)))
+LIBS	=	$(foreach p,$(PROJECTS), $(addsuffix .a,$(addprefix $(value $(p)_DIR)/lib/lib, $(value $(p)_LIBS))))
+INCDIRS	=	$(foreach p,$(PROJECTS), $(value $(p)_DIR)/include)
+CXXFLAGS+=	$(addprefix -I,$(INCDIRS))
+
+
+all:
+	@echo $(BINS)
+	@echo $(LIBS)
