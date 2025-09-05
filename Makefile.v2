@@ -12,7 +12,7 @@ CXXFLAGS+=  -I/usr/pkg/include -MMD -MP
 ANTLR	=	antlr
 AR		=	ar
 ARFLAGS	=	rcs
-#RANLIB	=	ranlib
+LDFLAGS	+=	-L/usr/pkg/lib -lantlr
 
 PROJECTS	=	AHIRASM HIERSYS LIBAHIR LLVM2AA BITVECS VALUE FNLIB IOLIB VERSION CTESTBENCH BGLWRAP
 
@@ -30,10 +30,11 @@ LIBAHIR_DIR	=	libAhirV2
 LIBAHIR_BINS=	vc2vhdl vcAnalyze vcFormat vcParse vhdlFormat
 LIBAHIR_LIBS=	VC
 LIBAHIR_GRAM=	vc
-vcParse_SRC=	vcParseMain
+vcParse_SRCS=	$(LIBAHIR_DIR)/util/vcParseMain.cpp
 
 LLVM2AA_DIR	=	llvmbc2Aa
 LLVM2AA_BINS=	llvm2aa
+llvm2aa_SRCS=	$(wildcard $(LLVM2AA_DIR)/src/*.cpp)
 
 BITVECS_DIR	=	BitVectors
 BITVECS_LIBS=	BitVectors
@@ -56,6 +57,14 @@ BGLWRAP_DIR=	BGLWrap
 
 
 # # # # # Usually no change should be required below this point # # # # #
+
+# Convention:
+# For BINS, binary name has a corresponding utils/<bin>.cpp program, unless <BIN>_SRCS is defined
+# If a project has a single LIB, build from src/*.cpp
+# If a project has multiple LIBS, for each source there is corresponding src/<lib>.c
+# If a project has no LIBS, use all sources for the BIN
+# We use all include directories for compilation and all libs for linking, to keep it simple
+
 
 BINS	=	$(foreach p,$(PROJECTS), $(addprefix $($(p)_DIR)/bin/, $($(p)_BINS)))
 LIBS	=	$(foreach p,$(PROJECTS), $(addsuffix .a,$(addprefix $($(p)_DIR)/lib/lib, $($(p)_LIBS))))
@@ -82,11 +91,14 @@ $(if $(filter-out 1,$(words $($(1)_LIBS))),\
 	$(sort $(wildcard $($(1)_DIR)/src/*.cpp) $(filter %.cpp,$(call f_ANTLROPS,$(1)))))
 endef
 
-define f_SRC2O
-$(subst .c,.o,$(subst .cpp,.o,$(1)))
+define f_BINSRCS
+$(if $($(2)_SRCS),\
+	$($(2)_SRCS),\
+	$($(1)_DIR)/util/$(2).cpp)
 endef
 
-define f_BINSRCS
+define f_SRC2O
+$(subst .c,.o,$(subst .cpp,.o,$(1)))
 endef
 
 define f_ALLSRCS
@@ -99,6 +111,13 @@ $($(1)_DIR)/lib/lib$(2).a: $(call f_SRC2O, $(call f_LIBSRCS,$(1),$(2)))
 
 endef
 
+define BINRULES
+$($(1)_DIR)/bin/$(2): $(call f_SRC2O, $(call f_BINSRCS,$(1),$(2))) $(LIBS)
+	mkdir -p $($(1)_DIR)/bin && \
+	$(CXX) $(call f_SRC2O, $(call f_BINSRCS,$(1),$(2))) $(LIBS) $(LDFLAGS) -o $($(1)_DIR)/bin/$(2)
+
+endef
+
 define PROJRULES
 
 $(call f_ANTLROPS,$(1)) &: $(call f_ANTLRINP,$(1))
@@ -106,19 +125,14 @@ $(call f_ANTLROPS,$(1)) &: $(call f_ANTLRINP,$(1))
 
 $(foreach l,$($(1)_LIBS),$(call LIBRULES,$(1),$(l)))
 
+$(foreach b,$($(1)_BINS),$(call BINRULES,$(1),$(b)))
+
 endef
 
 #$(1)_DFILES		=	$(subst .cpp,.d,$(call f_ALLSRCS,$(1)))
 #-include $$($(1)_DFILES)
 #	@echo building $($(1)_DIR)/lib/lib$(2).a from $(call f_LIBSRCS,$(1),$(2))
 
-# Convention:
-# For BINS, binary name has a corresponding utils/<bin>.cpp program, unless <BIN>_SRC is defined
-# If a project has a single LIB, build from src/*.cpp
-# If a project has multiple LIBS, for each source there is corresponding src/<lib>.c
-# If a project has no LIBS, use all sources for the BIN
-# We use all include directories for compilation and all libs for linking, to keep it simple
-
-all: $(LIBS)
+all: $(BINS)
 
 $(foreach p, $(PROJECTS), $(eval $(call PROJRULES,$(p))))
