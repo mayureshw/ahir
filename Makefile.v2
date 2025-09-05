@@ -71,10 +71,10 @@ LIBS	=	$(foreach p,$(PROJECTS), $(addsuffix .a,$(addprefix $($(p)_DIR)/lib/lib, 
 INCDIRS	=	$(foreach p,$(PROJECTS), $($(p)_DIR)/include) $(foreach p,$(PROJECTS),$(foreach g,$(p)_GRAM,$($(p)_DIR)/src))
 CXXFLAGS+=	$(addprefix -I,$(INCDIRS))
 
-%.o:	%.cpp
+%.o:	%.cpp | $(GENSRCS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-%.o:	%.c
+%.o:	%.c | $(GENSRCS)
 	$(CC) $(CXXFLAGS) -c $< -o $@
 
 define f_ANTLROPS
@@ -129,9 +129,6 @@ $(foreach b,$($(1)_BINS),$(call BINRULES,$(1),$(b)))
 
 endef
 
-#$(1)_DFILES		=	$(subst .cpp,.d,$(call f_ALLSRCS,$(1)))
-#-include $$($(1)_DFILES)
-#	@echo building $($(1)_DIR)/lib/lib$(2).a from $(call f_LIBSRCS,$(1),$(2))
 
 all: $(BINS)
 
@@ -139,8 +136,11 @@ all: $(BINS)
 BINOBJS=	$(foreach p,$(PROJECTS),$(foreach b,$($(p)_BINS),$(call f_SRC2O,$(call f_BINSRCS,$(p),$(b)))))
 LIBOBJS=	$(foreach p,$(PROJECTS),$(foreach l,$($(p)_LIBS),$(call f_SRC2O,$(call f_LIBSRCS,$(p),$(l)))))
 GENSRCS=	$(foreach p,$(PROJECTS),$(call f_ANTLROPS,$(p)))
+DFILES=		$(BINOBJS:.o=.d) $(LIBOBJS:.o=.d)
+-include $(DFILES)
+
 clean:
-	rm -f $(BINS) $(LIBS) $(BINOBJS) $(LIBOBJS) $(GENSRCS)
+	rm -f $(BINS) $(LIBS) $(BINOBJS) $(LIBOBJS) $(GENSRCS) $(DFILES)
 clean-bins:
 	rm -f $(BINS)
 clean-libs:
@@ -148,6 +148,6 @@ clean-libs:
 clean-gensrcs:
 	rm -f $(GENSRCS)
 clean-objs:
-	rm -f $(BINOBJS) $(LIBOBJS)
+	rm -f $(BINOBJS) $(LIBOBJS) $(DFILES)
 
 $(foreach p, $(PROJECTS), $(eval $(call PROJRULES,$(p))))
