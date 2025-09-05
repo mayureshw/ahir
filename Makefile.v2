@@ -10,6 +10,9 @@
 CXX		=	/usr/pkg/gcc12/bin/c++
 CXXFLAGS+=  -I/usr/pkg/include -MMD -MP
 ANTLR	=	antlr
+AR		=	ar
+ARFLAGS	=	rcs
+#RANLIB	=	ranlib
 
 PROJECTS	=	AHIRASM HIERSYS LIBAHIR LLVM2AA BITVECS VALUE FNLIB IOLIB VERSION CTESTBENCH BGLWRAP
 
@@ -91,7 +94,8 @@ endef
 
 define LIBRULES
 $($(1)_DIR)/lib/lib$(2).a: $(call f_SRC2O, $(call f_LIBSRCS,$(1),$(2)))
-	@echo building $($(1)_DIR)/lib/lib$(2).a from $(call f_SRC2O, $(call f_LIBSRCS,$(1),$(2)))
+	mkdir -p $($(1)_DIR)/lib && \
+	$(AR) $(ARFLAGS) $($(1)_DIR)/lib/lib$(2).a $(call f_SRC2O, $(call f_LIBSRCS,$(1),$(2)))
 
 endef
 
