@@ -7,12 +7,12 @@
 
 # Dependencies: boost, antlr2, llvm
 
-CXX		=	/usr/pkg/gcc12/bin/c++
-CXXFLAGS+=  -I/usr/pkg/include -MMD -MP
+#CXX		=	/usr/bin/c++
+CXXFLAGS+=  -I/usr/pkg/include -MMD -MP --std=c++17
 ANTLR	=	antlr
 AR		=	ar
 ARFLAGS	=	rcs
-LDFLAGS	+=	-L/usr/pkg/lib -lantlr -lboost_filesystem
+LDFLAGS	+=	-L/usr/pkg/lib -lantlr -lboost_filesystem -Wl,-rpath,/usr/pkg/lib
 
 PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION CTESTBENCH BGLWRAP #LLVM2AA
 
@@ -141,5 +141,13 @@ LIBOBJS=	$(foreach p,$(PROJECTS),$(foreach l,$($(p)_LIBS),$(call f_SRC2O,$(call 
 GENSRCS=	$(foreach p,$(PROJECTS),$(call f_ANTLROPS,$(p)))
 clean:
 	rm -f $(BINS) $(LIBS) $(BINOBJS) $(LIBOBJS) $(GENSRCS)
+clean-bins:
+	rm -f $(BINS)
+clean-libs:
+	rm -f $(LIBS)
+clean-gensrcs:
+	rm -f $(GENSRCS)
+clean-objs:
+	rm -f $(BINOBJS) $(LIBOBJS)
 
 $(foreach p, $(PROJECTS), $(eval $(call PROJRULES,$(p))))
