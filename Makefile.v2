@@ -12,9 +12,9 @@ CXXFLAGS+=  -I/usr/pkg/include -MMD -MP
 ANTLR	=	antlr
 AR		=	ar
 ARFLAGS	=	rcs
-LDFLAGS	+=	-L/usr/pkg/lib -lantlr
+LDFLAGS	+=	-L/usr/pkg/lib -lantlr -lboost_filesystem
 
-PROJECTS	=	AHIRASM HIERSYS LIBAHIR LLVM2AA BITVECS VALUE FNLIB IOLIB VERSION CTESTBENCH BGLWRAP
+PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION CTESTBENCH BGLWRAP #LLVM2AA
 
 AHIRASM_DIR	=	Ahir-asm/devel
 AHIRASM_BINS=	Aa2C Aa2VC AaLinkExtMem AaOpt AaPreprocess
@@ -32,9 +32,9 @@ LIBAHIR_LIBS=	VC
 LIBAHIR_GRAM=	vc
 vcParse_SRCS=	$(LIBAHIR_DIR)/util/vcParseMain.cpp
 
-LLVM2AA_DIR	=	llvmbc2Aa
-LLVM2AA_BINS=	llvm2aa
-llvm2aa_SRCS=	$(wildcard $(LLVM2AA_DIR)/src/*.cpp)
+#LLVM2AA_DIR	=	llvmbc2Aa
+#LLVM2AA_BINS=	llvm2aa
+#llvm2aa_SRCS=	$(wildcard $(LLVM2AA_DIR)/src/*.cpp)
 
 BITVECS_DIR	=	BitVectors
 BITVECS_LIBS=	BitVectors
@@ -134,5 +134,12 @@ endef
 #	@echo building $($(1)_DIR)/lib/lib$(2).a from $(call f_LIBSRCS,$(1),$(2))
 
 all: $(BINS)
+
+
+BINOBJS=	$(foreach p,$(PROJECTS),$(foreach b,$($(p)_BINS),$(call f_SRC2O,$(call f_BINSRCS,$(p),$(b)))))
+LIBOBJS=	$(foreach p,$(PROJECTS),$(foreach l,$($(p)_LIBS),$(call f_SRC2O,$(call f_LIBSRCS,$(p),$(l)))))
+GENSRCS=	$(foreach p,$(PROJECTS),$(call f_ANTLROPS,$(p)))
+clean:
+	rm -f $(BINS) $(LIBS) $(BINOBJS) $(LIBOBJS) $(GENSRCS)
 
 $(foreach p, $(PROJECTS), $(eval $(call PROJRULES,$(p))))
