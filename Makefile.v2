@@ -12,7 +12,7 @@
 
 PREFIX	=	/usr/pkg
 
-CFLAGS	+=  -I$(PREFIX)/include -MMD -MP
+CFLAGS	+=  -I$(PREFIX)/include -MMD -MP -fPIC
 CXXFLAGS+=	$(CFLAGS) --std=c++17
 ANTLR	=	antlr
 AR		=	ar
@@ -21,8 +21,9 @@ LDFLAGS	+=	-L$(PREFIX)/lib -lantlr -lboost_filesystem -Wl,-rpath,$(PREFIX)/lib
 SOFLAGS	+=	-shared
 
 # LLVM2AA will be built from a separate git repo. Eventually it will be merged back here.
-PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION BGLWRAP #LLVM2AA
+PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION #LLVM2AA
 PROJECTS	+=	PIPEHANDLER RTL2AAMATCHER CTESTBENCH
+PROJECTS	+=	BGLWRAP PTHREADUTILS
 
 AHIRASM_DIR	=	Ahir-asm/devel
 AHIRASM_BINS=	Aa2C Aa2VC AaLinkExtMem AaOpt AaPreprocess
@@ -71,7 +72,9 @@ PIPEHANDLER_LIBS=	PipeHandler
 RTL2AAMATCHER_DIR	=	rtl2AaMatcher
 RTL2AAMATCHER_LIBS	=	Rtl2AaMatcher
 
-BGLWRAP_DIR=	BGLWrap
+BGLWRAP_DIR	=	BGLWrap
+
+PTHREADUTILS_DIR=	pthreadUtils
 
 
 # # # # # Usually no change should be required below this point # # # # #
