@@ -12,7 +12,8 @@
 
 PREFIX	=	/usr/pkg
 
-CXXFLAGS+=  -I$(PREFIX)/include -MMD -MP --std=c++17
+CFLAGS	+=  -I$(PREFIX)/include -MMD -MP
+CXXFLAGS+=	$(CFLAGS) --std=c++17
 ANTLR	=	antlr
 AR		=	ar
 ARFLAGS	=	rcs
@@ -58,8 +59,11 @@ IOLIB_ILIBS	=	io
 VERSION_DIR	=	version
 VERSION_ILIBS=	AhirVersion
 
-CTESTBENCH_DIR	=	CtestBench
-#CTESTBENCH_LIBS	=	SockPipes SocketLibPipeHandler Vhpi
+CTESTBENCH_DIR				=	CtestBench
+CTESTBENCH_LIBS				=	SockPipes SocketLibPipeHandler Vhpi
+SockPipes_SRCS				=	$(addprefix $(CTESTBENCH_DIR)/src/, $(addsuffix .c, SocketLib SockPipes))
+SocketLibPipeHandler_SRCS	=	$(addprefix $(CTESTBENCH_DIR)/src/, $(addsuffix .c, SocketLib Pipes SockPipes pipeHandler))
+Vhpi_SRCS					=	$(addprefix $(CTESTBENCH_DIR)/src/, $(addsuffix .c, Vhpi SocketLib))
 
 PIPEHANDLER_DIR	=	pipeHandler
 PIPEHANDLER_LIBS=	PipeHandler
@@ -83,14 +87,16 @@ BGLWRAP_DIR=	BGLWrap
 BINS	=	$(foreach p,$(PROJECTS), $(addprefix $($(p)_DIR)/bin/, $($(p)_BINS)))
 LIBS	=	$(foreach p,$(PROJECTS), $(addsuffix .so,$(addprefix $($(p)_DIR)/lib/lib, $($(p)_LIBS))))
 ILIBS	=	$(foreach p,$(PROJECTS), $(addsuffix .a,$(addprefix $($(p)_DIR)/lib/lib, $($(p)_ILIBS))))
-INCDIRS	=	$(foreach p,$(PROJECTS), $($(p)_DIR)/include) $(foreach p,$(PROJECTS),$(foreach g,$(p)_GRAM,$($(p)_DIR)/src))
-CXXFLAGS+=	$(addprefix -I,$(INCDIRS))
+INCDIRS	+=	$(foreach p,$(PROJECTS), $($(p)_DIR)/include)
+INCDIRS	+=	$(foreach p,$(PROJECTS),$(foreach g,$($(p)_GRAM),$($(p)_DIR)/src))
+CFLAGS	+=	$(addprefix -I,$(INCDIRS))
 
-%.o:	%.cpp | $(GENSRCS)
+
+%.o:	%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-%.o:	%.c | $(GENSRCS)
-	$(CC) $(CXXFLAGS) -c $< -o $@
+%.o:	%.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 define f_ANTLROPS
 $(addprefix $($(1)_DIR)/src/, $(foreach g,$($(1)_GRAM), $(foreach suf,Lexer Parser, $(foreach ext,.hpp .cpp, $(g)$(suf)$(ext)))))
@@ -106,9 +112,11 @@ $(if $(filter-out 1,$(words $($(1)_ILIBS))),\
 	$(sort $(wildcard $($(1)_DIR)/src/*.cpp) $(filter %.cpp,$(call f_ANTLROPS,$(1)))))
 endef
 
-#define f_LIBSRCS
-$(wildcard $($(1)_DIR)/src/*.c)
-#endef
+define f_LIBSRCS
+$(if $($(2)_SRCS),\
+	$($(2)_SRCS),\
+	$(wildcard $($(1)_DIR)/src/*.c))
+endef
 
 define f_BINSRCS
 $(if $($(2)_SRCS),\
@@ -143,6 +151,7 @@ endef
 
 define PROJRULES
 
+$(info $(call f_ANTLROPS,$(1)))
 $(call f_ANTLROPS,$(1)) &: $(call f_ANTLRINP,$(1))
 	$(ANTLR) -o $($(1)_DIR)/src $(call f_ANTLRINP,$(1))
 
@@ -154,18 +163,25 @@ $(foreach b,$($(1)_BINS),$(call BINRULES,$(1),$(b)))
 
 endef
 
+define GENSRCDEPRULE
+$(1)	:	$(GENSRCS)
+
+endef
+
 
 all: $(BINS) $(LIBS)
 
 
-BINOBJS=	$(foreach p,$(PROJECTS),$(foreach b,$($(p)_BINS),$(call f_SRC2O,$(call f_BINSRCS,$(p),$(b)))))
-LIBOBJS=	$(foreach p,$(PROJECTS),$(foreach l,$($(p)_ILIBS),$(call f_SRC2O,$(call f_ILIBSRCS,$(p),$(l)))))
 GENSRCS=	$(foreach p,$(PROJECTS),$(call f_ANTLROPS,$(p)))
-DFILES=		$(BINOBJS:.o=.d) $(LIBOBJS:.o=.d)
+BINOBJS=	$(foreach p,$(PROJECTS),$(foreach b,$($(p)_BINS),$(call f_SRC2O,$(call f_BINSRCS,$(p),$(b)))))
+ILIBOBJS=	$(foreach p,$(PROJECTS),$(foreach l,$($(p)_ILIBS),$(call f_SRC2O,$(call f_ILIBSRCS,$(p),$(l)))))
+LIBOBJS=	$(foreach p,$(PROJECTS),$(foreach l,$($(p)_LIBS),$(call f_SRC2O,$(call f_LIBSRCS,$(p),$(l)))))
+OBJS=		$(BINOBJS) $(ILIBOBJS) $(LIBOBJS)
+DFILES=		$(OBJS:.o=.d)
 -include $(DFILES)
 
 clean:
-	rm -f $(BINS) $(LIBS) $(ILIBS) $(BINOBJS) $(LIBOBJS) $(GENSRCS) $(DFILES)
+	rm -f $(BINS) $(LIBS) $(ILIBS) $(OBJS) $(GENSRCS) $(DFILES)
 clean-bins:
 	rm -f $(BINS)
 clean-libs:
@@ -173,6 +189,8 @@ clean-libs:
 clean-gensrcs:
 	rm -f $(GENSRCS)
 clean-objs:
-	rm -f $(BINOBJS) $(LIBOBJS) $(DFILES)
+	rm -f $(OBJS) $(DFILES)
 
 $(foreach p, $(PROJECTS), $(eval $(call PROJRULES,$(p))))
+
+$(foreach o, $(OBJS), $(eval $(call GENSRCDEPRULE,$(o))))
