@@ -192,9 +192,9 @@ DFILES=		$(OBJS:.o=.d)
 -include $(DFILES)
 
 install: all
-	$(INSTALL) -d -m 755 $(BINDIR) $(LIBDIR)
-	$(INSTALL) -m 755 $(BINS) $(BINDIR)
-	$(INSTALL) -m 644 $(LIBS) $(LIBDIR)
+	$(INSTALL) -d -m 755 $(DESTDIR)$(BINDIR) $(DESTDIR)$(LIBDIR)
+	$(INSTALL) -m 755 $(BINS) $(DESTDIR)$(BINDIR)
+	$(INSTALL) -m 644 $(LIBS) $(DESTDIR)$(LIBDIR)
 
 clean: clean-bins clean-libs clean-objs clean-gensrcs
 
