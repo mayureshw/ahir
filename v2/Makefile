@@ -10,6 +10,7 @@
 
 # Dependencies: boost, antlr2, llvm (once llvm2aa is merged)
 
+OS  =   $(shell uname -s)
 ifeq ($(OS),NetBSD)
 PREFIX	?=	/usr/pkg
 else
@@ -33,68 +34,6 @@ LDFLAGS	+=	-L$(PREFIX)/lib -lantlr -lboost_filesystem -Wl,-rpath,$(PREFIX)/lib
 SOFLAGS	+=	-shared
 
 INSTSHRFILES	=	../LICENSE ../CONTRIBUTORS
-
-# # # # # # # ---- VHDL Packaging --- # # # # # # # # #
-
-VHDLRELEASEDIR	=	../vhdl/release
-VHDLRELFILES	=	ahirForImage GhdlLink ModelsimLink aHiR_ieee_proposed ahir ahirXilinx
-
-INSTVHDFILES	=	$(call f_prefsuf,$(VHDLRELEASEDIR),.vhdl,$(VHDLRELFILES))
-
-VHDLHOME		=	../vhdl
-VHDLAHIRHOME	=	$(VHDLHOME)/ahir
-PKGSV2DIR		=	$(VHDLAHIRHOME)/packagesV2
-CPATHDIR		=	$(VHDLAHIRHOME)/control-path
-V2VHDLDIR		=	$(VHDLAHIRHOME)/operatorsV2
-MEMSUBSYSDIR	=	$(VHDLAHIRHOME)/memory_subsystem
-OPERATORSDIR	=	$(VHDLAHIRHOME)/operatorsV2
-CLKGATINGDIR	=	$(VHDLAHIRHOME)/clock_gating
-VHPIDIR			=	$(VHDLHOME)/Vhpi
-AHIRIEEEDIR		=	$(VHDLHOME)/aHiR_ieee_proposed/trimmed
-
-V2VHDFILES		=	Types Utilities Subprograms BaseComponents Components FloatOperatorPackage OperatorPackage mem_component_pack mem_function_pack memory_subsystem_package merge_functions functionLibraryComponents
-MEMSUBSYSCOMPS_FORIMG	=	common base_bank_image strictly_ordered unordered
-OPERATORCOMPS_FORIMG	=	base ieee754 experimental functionLibrary
-AHIRFORIMAGESRCS		= $(f_prefsuf $(PKGSV2DIR),.vhd,$(V2VHDFILES)) \
-	$(foreach c,$(MEMSUBSYSCOMPS_FORIMG),$(wildcard $(MEMSUBSYSDIR)/$(c)/*.vhd)) \
-	$(wildcard $(CPATHDIR)/*.vhdl) \
-	$(foreach c,$(OPERATORCOMPS_FORIMG),$(wildcard $(OPERATORSDIR)/$(c)/*.vhd))
-$(VHDLRELEASEDIR)/ahirForImage.vhdl: $(AHIRFORIMAGESRCS)
-	cat $^ > $@
-
-GHDLLINKFILES	=	Utility_Package Vhpi_Package LogUtilitiesGhdl
-GHDLLINKSRCS	=	$(call f_prefsuf,$(VHPIDIR),.vhdl,$(GHDLLINKFILES))
-$(VHDLRELEASEDIR)/GhdlLink.vhdl:	$(GHDLLINKSRCS)
-	cat $^ > $@
-
-MODELSIMLINKFILES	=	Utility_Package Modelsim_FLI_Foreign LogUtilitiesModelsim
-MODELSIMLINKSRCS	=	$(call f_prefsuf,$(VHPIDIR),$(MODELSIMLINKFILES))
-$(VHDLRELEASEDIR)/ModelsimLink.vhdl:	$(MODELSIMLINKSRCS)
-	cat $^ > $@
-
-AHIRIEEEFILES	=	math_utility_pkg.vhd fixed_float_types_c.vhdl fixed_pkg_c.vhd float_pkg_c.vhd
-AHIRIEEESRCS	=	$(addprefix $(AHIRIEEEDIR)/,$(AHIRIEEEFILES))
-$(VHDLRELEASEDIR)/aHiR_ieee_proposed.vhdl:	$(AHIRIEEESRCS)
-	cat $^ > $@
-
-AHIR_XL_PKGV2FILES		=	GlobalConstants Types Utilities Subprograms BaseComponents Components FloatOperatorPackage OperatorPackage mem_component_pack mem_function_pack memory_subsystem_package merge_functions functionLibraryComponents ApIntComponents
-MEMSUBSYSCOMPS_FORAHIR	=	common base_bank strictly_ordered unordered
-OPERATORCOMPS_FORAHIR	=	base ieee754 experimental glue level_core functionLibrary ap_int
-AHIR_XL_COMMONSRCS		=	$(f_prefsuf,$(PKGSV2DIR),.vhd,$(AHIR_XL_PKGV2FILES)) \
-	$(foreach c,$(MEMSUBSYSCOMPS_FORAHIR),$(wildcard $(MEMSUBSYSDIR)/$(c)/*.vhd)) \
-	$(wildcard $(CPATHDIR)/*.vhdl) \
-	$(foreach c,$(OPERATORCOMPS_FORAHIR),$(wildcard $(OPERATORSDIR)/$(c)/*.vhd)) \
-	$(wildcard $(CLKGATINGDIR)/*__clock_gate.vhdl)
-
-AHIRSRCS	=	$(AHIR_XL_COMMONSRCS) $(CLKGATINGDIR)/clock_gater.vhdl
-$(VHDLRELEASEDIR)/ahir.vhdl:	$(AHIRSRCS)
-	cat $^ > $@
-
-AHIRXLSRCS	=	$(AHIR_XL_COMMONSRCS) $(CLKGATINGDIR)/clock_gater_xilinx.vhdl
-$(VHDLRELEASEDIR)/ahirXilinx.vhdl:	$(AHIRSRCS)
-	cat $^ > $@
-
-# # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 # LLVM2AA will be built from a separate git repo. Eventually it will be merged back here.
 PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION #LLVM2AA
@@ -155,6 +94,54 @@ BGLWRAP_DIR	=	BGLWrap
 
 PTHREADUTILS_DIR=	pthreadUtils
 PTHREADUTILS_HDRS=	*
+
+# # # # # # # ---- VHDL Packaging --- # # # # # # # # #
+VHDLRELEASEDIR	=	../vhdl/release
+VHDLRELFILES	=	ahirForImage GhdlLink ModelsimLink aHiR_ieee_proposed ahir ahirXilinx
+
+INSTVHDFILES	=	$(call f_prefsuf,$(VHDLRELEASEDIR),.vhdl,$(VHDLRELFILES))
+
+VHDLHOME		=	../vhdl
+VHDLAHIRHOME	=	$(VHDLHOME)/ahir
+PKGSV2DIR		=	$(VHDLAHIRHOME)/packagesV2
+CPATHDIR		=	$(VHDLAHIRHOME)/control-path
+V2VHDLDIR		=	$(VHDLAHIRHOME)/operatorsV2
+MEMSUBSYSDIR	=	$(VHDLAHIRHOME)/memory_subsystem
+OPERATORSDIR	=	$(VHDLAHIRHOME)/operatorsV2
+CLKGATINGDIR	=	$(VHDLAHIRHOME)/clock_gating
+VHPIDIR			=	$(VHDLHOME)/Vhpi
+AHIRIEEEDIR		=	$(VHDLHOME)/aHiR_ieee_proposed/trimmed
+
+V2VHDFILES		=	Types Utilities Subprograms BaseComponents Components FloatOperatorPackage OperatorPackage mem_component_pack mem_function_pack memory_subsystem_package merge_functions functionLibraryComponents
+MEMSUBSYSCOMPS_FORIMG	=	common base_bank_image strictly_ordered unordered
+OPERATORCOMPS_FORIMG	=	base ieee754 experimental functionLibrary
+AHIRFORIMAGESRCS		= $(f_prefsuf $(PKGSV2DIR),.vhd,$(V2VHDFILES)) \
+	$(foreach c,$(MEMSUBSYSCOMPS_FORIMG),$(wildcard $(MEMSUBSYSDIR)/$(c)/*.vhd)) \
+	$(wildcard $(CPATHDIR)/*.vhdl) \
+	$(foreach c,$(OPERATORCOMPS_FORIMG),$(wildcard $(OPERATORSDIR)/$(c)/*.vhd))
+
+GHDLLINKFILES	=	Utility_Package Vhpi_Package LogUtilitiesGhdl
+GHDLLINKSRCS	=	$(call f_prefsuf,$(VHPIDIR),.vhdl,$(GHDLLINKFILES))
+
+MODELSIMLINKFILES	=	Utility_Package Modelsim_FLI_Foreign LogUtilitiesModelsim
+MODELSIMLINKSRCS	=	$(call f_prefsuf,$(VHPIDIR),.vhdl,$(MODELSIMLINKFILES))
+
+AHIRIEEEFILES	=	math_utility_pkg.vhd fixed_float_types_c.vhdl fixed_pkg_c.vhd float_pkg_c.vhd
+AHIRIEEESRCS	=	$(addprefix $(AHIRIEEEDIR)/,$(AHIRIEEEFILES))
+
+AHIR_XL_PKGV2FILES		=	GlobalConstants Types Utilities Subprograms BaseComponents Components FloatOperatorPackage OperatorPackage mem_component_pack mem_function_pack memory_subsystem_package merge_functions functionLibraryComponents ApIntComponents
+MEMSUBSYSCOMPS_FORAHIR	=	common base_bank strictly_ordered unordered
+OPERATORCOMPS_FORAHIR	=	base ieee754 experimental glue level_core functionLibrary ap_int
+AHIR_XL_COMMONSRCS		=	$(f_prefsuf,$(PKGSV2DIR),.vhd,$(AHIR_XL_PKGV2FILES)) \
+	$(foreach c,$(MEMSUBSYSCOMPS_FORAHIR),$(wildcard $(MEMSUBSYSDIR)/$(c)/*.vhd)) \
+	$(wildcard $(CPATHDIR)/*.vhdl) \
+	$(foreach c,$(OPERATORCOMPS_FORAHIR),$(wildcard $(OPERATORSDIR)/$(c)/*.vhd)) \
+	$(wildcard $(CLKGATINGDIR)/*__clock_gate.vhdl)
+
+AHIRSRCS	=	$(AHIR_XL_COMMONSRCS) $(CLKGATINGDIR)/clock_gater.vhdl
+
+AHIRXLSRCS	=	$(AHIR_XL_COMMONSRCS) $(CLKGATINGDIR)/clock_gater_xilinx.vhdl
+# # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 # # # # # Usually no change should be required below this point # # # # #
 
@@ -256,7 +243,6 @@ endef
 
 all: $(BINS) $(LIBS) $(INSTVHDFILES)
 
-
 GENSRCS=	$(foreach p,$(PROJECTS),$(call f_ANTLROPS,$(p)))
 BINOBJS=	$(foreach p,$(PROJECTS),$(foreach b,$($(p)_BINS),$(call f_SRC2O,$(call f_BINSRCS,$(p),$(b)))))
 ILIBOBJS=	$(foreach p,$(PROJECTS),$(foreach l,$($(p)_ILIBS),$(call f_SRC2O,$(call f_ILIBSRCS,$(p),$(l)))))
@@ -295,4 +281,22 @@ clean-vhdl:
 $(foreach p, $(PROJECTS), $(eval $(call PROJRULES,$(p))))
 
 $(foreach o, $(OBJS), $(eval $(call GENSRCDEPRULE,$(o))))
+
+$(VHDLRELEASEDIR)/ahirForImage.vhdl: $(AHIRFORIMAGESRCS)
+	cat $^ > $@
+
+$(VHDLRELEASEDIR)/GhdlLink.vhdl:	$(GHDLLINKSRCS)
+	cat $^ > $@
+
+$(VHDLRELEASEDIR)/ModelsimLink.vhdl:	$(MODELSIMLINKSRCS)
+	cat $^ > $@
+
+$(VHDLRELEASEDIR)/aHiR_ieee_proposed.vhdl:	$(AHIRIEEESRCS)
+	cat $^ > $@
+
+$(VHDLRELEASEDIR)/ahir.vhdl:	$(AHIRSRCS)
+	cat $^ > $@
+
+$(VHDLRELEASEDIR)/ahirXilinx.vhdl:	$(AHIRXLSRCS)
+	cat $^ > $@
 
