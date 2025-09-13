@@ -10,7 +10,16 @@
 
 # Dependencies: boost, antlr2, llvm (once llvm2aa is merged)
 
-PREFIX	=	/usr/pkg
+ifeq ($(OS),NetBSD)
+PREFIX	?=	/usr/pkg
+else
+PREFIX	?=	/usr/local
+endif
+
+INSTALL	?=	install
+
+BINDIR	?=	$(PREFIX)/bin
+LIBDIR	?=	$(PREFIX)/lib
 
 CFLAGS	+=  -I$(PREFIX)/include -MMD -MP -fPIC
 CXXFLAGS+=	$(CFLAGS) --std=c++17
@@ -154,7 +163,6 @@ endef
 
 define PROJRULES
 
-$(info $(call f_ANTLROPS,$(1)))
 $(call f_ANTLROPS,$(1)) &: $(call f_ANTLRINP,$(1))
 	$(ANTLR) -o $($(1)_DIR)/src $(call f_ANTLRINP,$(1))
 
@@ -183,8 +191,13 @@ OBJS=		$(BINOBJS) $(ILIBOBJS) $(LIBOBJS)
 DFILES=		$(OBJS:.o=.d)
 -include $(DFILES)
 
-clean:
-	rm -f $(BINS) $(LIBS) $(ILIBS) $(OBJS) $(GENSRCS) $(DFILES)
+install: all
+	$(INSTALL) -d -m 755 $(BINDIR) $(LIBDIR)
+	$(INSTALL) -m 755 $(BINS) $(BINDIR)
+	$(INSTALL) -m 644 $(LIBS) $(LIBDIR)
+
+clean: clean-bins clean-libs clean-objs clean-gensrcs
+
 clean-bins:
 	rm -f $(BINS)
 clean-libs:
@@ -197,3 +210,4 @@ clean-objs:
 $(foreach p, $(PROJECTS), $(eval $(call PROJRULES,$(p))))
 
 $(foreach o, $(OBJS), $(eval $(call GENSRCDEPRULE,$(o))))
+
