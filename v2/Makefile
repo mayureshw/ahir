@@ -32,8 +32,31 @@ ARFLAGS	=	rcs
 LDFLAGS	+=	-L$(PREFIX)/lib -lantlr -lboost_filesystem -Wl,-rpath,$(PREFIX)/lib
 SOFLAGS	+=	-shared
 
-SHRFILES	=	../LICENSE ../CONTRIBUTORS
-VHDFILES	=	$(wildcard ../vhdl/release/*.vhdl)
+INSTSHRFILES	=	../LICENSE ../CONTRIBUTORS
+
+# # # # # # # ---- VHDL Handling --- # # # # # # # # #
+
+VHDLRELEASEDIR	=	../vhdl/release
+VHDLRELFILES	=	ahirForImage
+INSTVHDFILES	=	$(call f_prefsuf,$(VHDLRELEASEDIR),.vhdl,$(VHDLRELFILES))
+
+VHDLHOME		=	../vhdl/ahir
+V2VHDLDIR		=	$(VHDLHOME)/operatorsV2
+MEMSUBSYSDIR	=	$(VHDLHOME)/memory_subsystem
+OPERATORSDIR	=	$(VHDLHOME)/operatorsV2
+V2VHDFILES		=	Types Utilities Subprograms BaseComponents Components FloatOperatorPackage OperatorPackage mem_component_pack mem_function_pack memory_subsystem_package merge_functions functionLibraryComponents
+MEMSUBSYSCOMPS	=	common base_bank_image strictly_ordered unordered
+OPERATORCOMPS	=	base ieee754 experimental functionLibrary
+
+AHIRFORIMAGESRCS	= $(f_prefsuf ../vhdl/ahir/packagesV2,.vhd,$(V2VHDFILES)) \
+	$(foreach c,$(MEMSUBSYSCOMPS),$(wildcard $(MEMSUBSYSDIR)/$(c)/*.vhd)) \
+	$(wildcard ../vhdl/ahir/control-path/*.vhdl) \
+	$(foreach c,$(OPERATORCOMPS),$(wildcard $(OPERATORSDIR)/$(c)/*.vhd))
+
+$(VHDLRELEASEDIR)/ahirForImage.vhdl: $(AHIRFORIMAGESRCS)
+	cat $^ > $@
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 # LLVM2AA will be built from a separate git repo. Eventually it will be merged back here.
 PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION #LLVM2AA
@@ -96,6 +119,10 @@ PTHREADUTILS_DIR=	pthreadUtils
 PTHREADUTILS_HDRS=	*
 
 # # # # # Usually no change should be required below this point # # # # #
+
+define f_prefsuf
+	$(addprefix $(1)/,$(addsuffix $(2),$(3)))
+endef
 
 # Convention:
 # For BINS, binary name has a corresponding utils/<bin>.cpp program, unless <BIN>_SRCS is defined
@@ -189,7 +216,7 @@ $(1)	:	$(GENSRCS)
 endef
 
 
-all: $(BINS) $(LIBS)
+all: $(BINS) $(LIBS) $(INSTVHDFILES)
 
 
 GENSRCS=	$(foreach p,$(PROJECTS),$(call f_ANTLROPS,$(p)))
@@ -211,8 +238,8 @@ install: all
 	$(INSTALL) -m 755 $(BINS) $(DESTDIR)$(INSTBINDIR)
 	$(INSTALL) -m 755 $(LIBS) $(DESTDIR)$(INSTLIBDIR)
 	$(INSTALL) -m 644 $(INSTHDRS) $(DESTDIR)$(INSTINCDIR)
-	$(INSTALL) -m 644 $(SHRFILES) $(DESTDIR)$(INSTSHRDIR)
-	$(INSTALL) -m 644 $(VHDFILES) $(DESTDIR)$(INSTVHDDIR)
+	$(INSTALL) -m 644 $(INSTSHRFILES) $(DESTDIR)$(INSTSHRDIR)
+	$(INSTALL) -m 644 $(INSTVHDFILES) $(DESTDIR)$(INSTVHDDIR)
 
 clean: clean-bins clean-libs clean-objs clean-gensrcs
 
