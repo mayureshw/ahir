@@ -2,33 +2,37 @@
 # formatVhdlFiles.py
 # ghdlSanitize.sh
 
-# LIBS are .a, not to be installed, consumed for build (to be confirmed)
+# Pending libs (not sure if to be built)
+# FLI Fli ModelsimFLI
+
+# ILIBS are .a, not to be installed, consumed for build (to be confirmed)
 # .so exist, but have to confirm whether they are to be installed
 
-# Dependencies: boost, antlr2, llvm
+# Dependencies: boost, antlr2, llvm (once llvm2aa is merged)
 
-#CXX		=	/usr/bin/c++
 CXXFLAGS+=  -I/usr/pkg/include -MMD -MP --std=c++17
 ANTLR	=	antlr
 AR		=	ar
 ARFLAGS	=	rcs
 LDFLAGS	+=	-L/usr/pkg/lib -lantlr -lboost_filesystem -Wl,-rpath,/usr/pkg/lib
 
-PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION CTESTBENCH BGLWRAP #LLVM2AA
+# LLVM2AA will be built from a separate git repo. Eventually it will be merged back here.
+PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION BGLWRAP #LLVM2AA
+PROJECTS	+=	PIPEHANDLER RTL2AAMATCHER CTESTBENCH
 
 AHIRASM_DIR	=	Ahir-asm/devel
 AHIRASM_BINS=	Aa2C Aa2VC AaLinkExtMem AaOpt AaPreprocess
-AHIRASM_LIBS=	Aa
+AHIRASM_ILIBS=	Aa
 AHIRASM_GRAM=	Aa
 
 HIERSYS_DIR	=	HierSysBuild
 HIERSYS_BINS=	hierSys2C hierSys2Vhdl hierSysCheck hierSysGenVhdlComponentsPackage hierSysPartition hierSysUniquify
-HIERSYS_LIBS=	HierSys
+HIERSYS_ILIBS=	HierSys
 HIERSYS_GRAM=	hierSys
 
 LIBAHIR_DIR	=	libAhirV2
 LIBAHIR_BINS=	vc2vhdl vcAnalyze vcFormat vcParse vhdlFormat
-LIBAHIR_LIBS=	VC
+LIBAHIR_ILIBS=	VC
 LIBAHIR_GRAM=	vc
 vcParse_SRCS=	$(LIBAHIR_DIR)/util/vcParseMain.cpp
 
@@ -37,21 +41,28 @@ vcParse_SRCS=	$(LIBAHIR_DIR)/util/vcParseMain.cpp
 #llvm2aa_SRCS=	$(wildcard $(LLVM2AA_DIR)/src/*.cpp)
 
 BITVECS_DIR	=	BitVectors
-BITVECS_LIBS=	BitVectors
+BITVECS_ILIBS=	BitVectors
 
 VALUE_DIR	=	Value
-VALUE_LIBS	=	Value
+VALUE_ILIBS	=	Value
 
 FNLIB_DIR	=	functionLibrary
-FNLIB_LIBS	=	fpu llvm_intrinsics timer
+FNLIB_ILIBS	=	fpu llvm_intrinsics timer
 
 IOLIB_DIR	=	iolib
-IOLIB_LIBS	=	io
+IOLIB_ILIBS	=	io
 
 VERSION_DIR	=	version
-VERSION_LIBS=	AhirVersion
+VERSION_ILIBS=	AhirVersion
 
-CTESTBENCH_DIR=	CtestBench
+CTESTBENCH_DIR	=	CtestBench
+CTESTBENCH_LIBS	=	SockPipes SocketLibPipeHandler Vhpi
+
+PIPEHANDLER_DIR	=	pipeHandler
+PIPEHANDLER_LIBS=	PipeHandler
+
+RTL2AAMATCHER_DIR	=	rtl2AaMatcher
+RTL2AAMATCHER_LIBS	=	Rtl2AaMatcher
 
 BGLWRAP_DIR=	BGLWrap
 
@@ -61,13 +72,13 @@ BGLWRAP_DIR=	BGLWrap
 # Convention:
 # For BINS, binary name has a corresponding utils/<bin>.cpp program, unless <BIN>_SRCS is defined
 # If a project has a single LIB, build from src/*.cpp
-# If a project has multiple LIBS, for each source there is corresponding src/<lib>.c
-# If a project has no LIBS, use all sources for the BIN
+# If a project has multiple ILIBS, for each source there is corresponding src/<lib>.c
+# If a project has no ILIBS, use all sources for the BIN
 # We use all include directories for compilation and all libs for linking, to keep it simple
 
 
 BINS	=	$(foreach p,$(PROJECTS), $(addprefix $($(p)_DIR)/bin/, $($(p)_BINS)))
-LIBS	=	$(foreach p,$(PROJECTS), $(addsuffix .a,$(addprefix $($(p)_DIR)/lib/lib, $($(p)_LIBS))))
+ILIBS	=	$(foreach p,$(PROJECTS), $(addsuffix .a,$(addprefix $($(p)_DIR)/lib/lib, $($(p)_ILIBS))))
 INCDIRS	=	$(foreach p,$(PROJECTS), $($(p)_DIR)/include) $(foreach p,$(PROJECTS),$(foreach g,$(p)_GRAM,$($(p)_DIR)/src))
 CXXFLAGS+=	$(addprefix -I,$(INCDIRS))
 
@@ -85,8 +96,8 @@ define f_ANTLRINP
 $(foreach g,$($(1)_GRAM),$($(1)_DIR)/grammar/$(g).g)
 endef
 
-define f_LIBSRCS
-$(if $(filter-out 1,$(words $($(1)_LIBS))),\
+define f_ILIBSRCS
+$(if $(filter-out 1,$(words $($(1)_ILIBS))),\
 	$($(1)_DIR)/src/$(2).c,\
 	$(sort $(wildcard $($(1)_DIR)/src/*.cpp) $(filter %.cpp,$(call f_ANTLROPS,$(1)))))
 endef
@@ -105,16 +116,16 @@ define f_ALLSRCS
 endef
 
 define LIBRULES
-$($(1)_DIR)/lib/lib$(2).a: $(call f_SRC2O, $(call f_LIBSRCS,$(1),$(2)))
+$($(1)_DIR)/lib/lib$(2).a: $(call f_SRC2O, $(call f_ILIBSRCS,$(1),$(2)))
 	mkdir -p $($(1)_DIR)/lib && \
-	$(AR) $(ARFLAGS) $($(1)_DIR)/lib/lib$(2).a $(call f_SRC2O, $(call f_LIBSRCS,$(1),$(2)))
+	$(AR) $(ARFLAGS) $($(1)_DIR)/lib/lib$(2).a $(call f_SRC2O, $(call f_ILIBSRCS,$(1),$(2)))
 
 endef
 
 define BINRULES
-$($(1)_DIR)/bin/$(2): $(call f_SRC2O, $(call f_BINSRCS,$(1),$(2))) $(LIBS)
+$($(1)_DIR)/bin/$(2): $(call f_SRC2O, $(call f_BINSRCS,$(1),$(2))) $(ILIBS)
 	mkdir -p $($(1)_DIR)/bin && \
-	$(CXX) $(call f_SRC2O, $(call f_BINSRCS,$(1),$(2))) $(LIBS) $(LDFLAGS) -o $($(1)_DIR)/bin/$(2)
+	$(CXX) $(call f_SRC2O, $(call f_BINSRCS,$(1),$(2))) $(ILIBS) $(LDFLAGS) -o $($(1)_DIR)/bin/$(2)
 
 endef
 
@@ -123,7 +134,7 @@ define PROJRULES
 $(call f_ANTLROPS,$(1)) &: $(call f_ANTLRINP,$(1))
 	$(ANTLR) -o $($(1)_DIR)/src $(call f_ANTLRINP,$(1))
 
-$(foreach l,$($(1)_LIBS),$(call LIBRULES,$(1),$(l)))
+$(foreach l,$($(1)_ILIBS),$(call LIBRULES,$(1),$(l)))
 
 $(foreach b,$($(1)_BINS),$(call BINRULES,$(1),$(b)))
 
@@ -134,17 +145,17 @@ all: $(BINS)
 
 
 BINOBJS=	$(foreach p,$(PROJECTS),$(foreach b,$($(p)_BINS),$(call f_SRC2O,$(call f_BINSRCS,$(p),$(b)))))
-LIBOBJS=	$(foreach p,$(PROJECTS),$(foreach l,$($(p)_LIBS),$(call f_SRC2O,$(call f_LIBSRCS,$(p),$(l)))))
+LIBOBJS=	$(foreach p,$(PROJECTS),$(foreach l,$($(p)_ILIBS),$(call f_SRC2O,$(call f_ILIBSRCS,$(p),$(l)))))
 GENSRCS=	$(foreach p,$(PROJECTS),$(call f_ANTLROPS,$(p)))
 DFILES=		$(BINOBJS:.o=.d) $(LIBOBJS:.o=.d)
 -include $(DFILES)
 
 clean:
-	rm -f $(BINS) $(LIBS) $(BINOBJS) $(LIBOBJS) $(GENSRCS) $(DFILES)
+	rm -f $(BINS) $(ILIBS) $(BINOBJS) $(LIBOBJS) $(GENSRCS) $(DFILES)
 clean-bins:
 	rm -f $(BINS)
 clean-libs:
-	rm -f $(LIBS)
+	rm -f $(ILIBS)
 clean-gensrcs:
 	rm -f $(GENSRCS)
 clean-objs:
