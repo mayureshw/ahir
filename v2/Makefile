@@ -18,8 +18,9 @@ endif
 
 INSTALL	?=	install
 
-BINDIR	?=	$(PREFIX)/bin
-LIBDIR	?=	$(PREFIX)/lib
+INSTBINDIR	?=	$(PREFIX)/bin
+INSTLIBDIR	?=	$(PREFIX)/lib
+INSTINCDIR	?=	$(PREFIX)/include
 
 CFLAGS	+=  -I$(PREFIX)/include -MMD -MP -fPIC
 CXXFLAGS+=	$(CFLAGS) --std=c++17
@@ -71,20 +72,23 @@ VERSION_ILIBS=	AhirVersion
 
 CTESTBENCH_DIR				=	CtestBench
 CTESTBENCH_LIBS				=	SockPipes SocketLibPipeHandler Vhpi
+CTESTBENCH_HDRS				=	SockPipes SocketLib Vhpi
 SockPipes_SRCS				=	$(addprefix $(CTESTBENCH_DIR)/src/, $(addsuffix .c, SocketLib SockPipes))
 SocketLibPipeHandler_SRCS	=	$(addprefix $(CTESTBENCH_DIR)/src/, $(addsuffix .c, SocketLib Pipes SockPipes pipeHandler))
 Vhpi_SRCS					=	$(addprefix $(CTESTBENCH_DIR)/src/, $(addsuffix .c, Vhpi SocketLib))
 
 PIPEHANDLER_DIR	=	pipeHandler
 PIPEHANDLER_LIBS=	PipeHandler
+PIPEHANDLER_HDRS=	*
 
 RTL2AAMATCHER_DIR	=	rtl2AaMatcher
 RTL2AAMATCHER_LIBS	=	Rtl2AaMatcher
+RTL2AAMATCHER_HDRS	=	*
 
 BGLWRAP_DIR	=	BGLWrap
 
 PTHREADUTILS_DIR=	pthreadUtils
-
+PTHREADUTILS_HDRS=	*
 
 # # # # # Usually no change should be required below this point # # # # #
 
@@ -191,10 +195,17 @@ OBJS=		$(BINOBJS) $(ILIBOBJS) $(LIBOBJS)
 DFILES=		$(OBJS:.o=.d)
 -include $(DFILES)
 
+define f_INSTHDRS
+$(foreach h,$($(1)_HDRS), $(if $(filter-out *,$(h)), $($(1)_DIR)/include/$(h).h, $(wildcard $($(1)_DIR)/include/*.h)))
+endef
+
+INSTHDRS=	$(foreach p,$(PROJECTS),$(call f_INSTHDRS,$(p)))
+
 install: all
-	$(INSTALL) -d -m 755 $(DESTDIR)$(BINDIR) $(DESTDIR)$(LIBDIR)
-	$(INSTALL) -m 755 $(BINS) $(DESTDIR)$(BINDIR)
-	$(INSTALL) -m 644 $(LIBS) $(DESTDIR)$(LIBDIR)
+	$(INSTALL) -d -m 755 $(DESTDIR)$(INSTBINDIR) $(DESTDIR)$(INSTLIBDIR) $(DESTDIR)$(INSTINCDIR)
+	$(INSTALL) -m 755 $(BINS) $(DESTDIR)$(INSTBINDIR)
+	$(INSTALL) -m 644 $(LIBS) $(DESTDIR)$(INSTLIBDIR)
+	$(INSTALL) -m 644 $(INSTHDRS) $(DESTDIR)$(INSTINCDIR)
 
 clean: clean-bins clean-libs clean-objs clean-gensrcs
 
