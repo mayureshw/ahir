@@ -18,9 +18,11 @@ endif
 
 INSTALL	?=	install
 
-INSTBINDIR	?=	$(PREFIX)/bin
-INSTLIBDIR	?=	$(PREFIX)/lib
-INSTINCDIR	?=	$(PREFIX)/include
+INSTBINDIR	=	$(PREFIX)/bin
+INSTLIBDIR	=	$(PREFIX)/lib
+INSTINCDIR	=	$(PREFIX)/include
+INSTSHRDIR	=	$(PREFIX)/share/ahir
+INSTVHDDIR	=	$(PREFIX)/share/ahir/vhdl
 
 CFLAGS	+=  -I$(PREFIX)/include -MMD -MP -fPIC
 CXXFLAGS+=	$(CFLAGS) --std=c++17
@@ -29,6 +31,9 @@ AR		=	ar
 ARFLAGS	=	rcs
 LDFLAGS	+=	-L$(PREFIX)/lib -lantlr -lboost_filesystem -Wl,-rpath,$(PREFIX)/lib
 SOFLAGS	+=	-shared
+
+SHRFILES	=	../LICENSE ../CONTRIBUTORS
+VHDFILES	=	$(wildcard ../vhdl/release/*.vhdl)
 
 # LLVM2AA will be built from a separate git repo. Eventually it will be merged back here.
 PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION #LLVM2AA
@@ -202,10 +207,12 @@ endef
 INSTHDRS=	$(foreach p,$(PROJECTS),$(call f_INSTHDRS,$(p)))
 
 install: all
-	$(INSTALL) -d -m 755 $(DESTDIR)$(INSTBINDIR) $(DESTDIR)$(INSTLIBDIR) $(DESTDIR)$(INSTINCDIR)
+	$(INSTALL) -d -m 755 $(DESTDIR)$(INSTBINDIR) $(DESTDIR)$(INSTLIBDIR) $(DESTDIR)$(INSTINCDIR) $(DESTDIR)$(INSTSHRDIR) $(DESTDIR)$(INSTVHDDIR)
 	$(INSTALL) -m 755 $(BINS) $(DESTDIR)$(INSTBINDIR)
 	$(INSTALL) -m 644 $(LIBS) $(DESTDIR)$(INSTLIBDIR)
 	$(INSTALL) -m 644 $(INSTHDRS) $(DESTDIR)$(INSTINCDIR)
+	$(INSTALL) -m 644 $(SHRFILES) $(DESTDIR)$(INSTSHRDIR)
+	$(INSTALL) -m 644 $(VHDFILES) $(DESTDIR)$(INSTVHDDIR)
 
 clean: clean-bins clean-libs clean-objs clean-gensrcs
 
