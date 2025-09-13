@@ -34,26 +34,64 @@ SOFLAGS	+=	-shared
 
 INSTSHRFILES	=	../LICENSE ../CONTRIBUTORS
 
-# # # # # # # ---- VHDL Handling --- # # # # # # # # #
+# # # # # # # ---- VHDL Packaging --- # # # # # # # # #
 
 VHDLRELEASEDIR	=	../vhdl/release
-VHDLRELFILES	=	ahirForImage
+VHDLRELFILES	=	ahirForImage GhdlLink ModelsimLink aHiR_ieee_proposed ahir ahirXilinx
+
 INSTVHDFILES	=	$(call f_prefsuf,$(VHDLRELEASEDIR),.vhdl,$(VHDLRELFILES))
 
-VHDLHOME		=	../vhdl/ahir
-V2VHDLDIR		=	$(VHDLHOME)/operatorsV2
-MEMSUBSYSDIR	=	$(VHDLHOME)/memory_subsystem
-OPERATORSDIR	=	$(VHDLHOME)/operatorsV2
+VHDLHOME		=	../vhdl
+VHDLAHIRHOME	=	$(VHDLHOME)/ahir
+PKGSV2DIR		=	$(VHDLAHIRHOME)/packagesV2
+CPATHDIR		=	$(VHDLAHIRHOME)/control-path
+V2VHDLDIR		=	$(VHDLAHIRHOME)/operatorsV2
+MEMSUBSYSDIR	=	$(VHDLAHIRHOME)/memory_subsystem
+OPERATORSDIR	=	$(VHDLAHIRHOME)/operatorsV2
+CLKGATINGDIR	=	$(VHDLAHIRHOME)/clock_gating
+VHPIDIR			=	$(VHDLHOME)/Vhpi
+AHIRIEEEDIR		=	$(VHDLHOME)/aHiR_ieee_proposed/trimmed
+
 V2VHDFILES		=	Types Utilities Subprograms BaseComponents Components FloatOperatorPackage OperatorPackage mem_component_pack mem_function_pack memory_subsystem_package merge_functions functionLibraryComponents
-MEMSUBSYSCOMPS	=	common base_bank_image strictly_ordered unordered
-OPERATORCOMPS	=	base ieee754 experimental functionLibrary
-
-AHIRFORIMAGESRCS	= $(f_prefsuf ../vhdl/ahir/packagesV2,.vhd,$(V2VHDFILES)) \
-	$(foreach c,$(MEMSUBSYSCOMPS),$(wildcard $(MEMSUBSYSDIR)/$(c)/*.vhd)) \
-	$(wildcard ../vhdl/ahir/control-path/*.vhdl) \
-	$(foreach c,$(OPERATORCOMPS),$(wildcard $(OPERATORSDIR)/$(c)/*.vhd))
-
+MEMSUBSYSCOMPS_FORIMG	=	common base_bank_image strictly_ordered unordered
+OPERATORCOMPS_FORIMG	=	base ieee754 experimental functionLibrary
+AHIRFORIMAGESRCS		= $(f_prefsuf $(PKGSV2DIR),.vhd,$(V2VHDFILES)) \
+	$(foreach c,$(MEMSUBSYSCOMPS_FORIMG),$(wildcard $(MEMSUBSYSDIR)/$(c)/*.vhd)) \
+	$(wildcard $(CPATHDIR)/*.vhdl) \
+	$(foreach c,$(OPERATORCOMPS_FORIMG),$(wildcard $(OPERATORSDIR)/$(c)/*.vhd))
 $(VHDLRELEASEDIR)/ahirForImage.vhdl: $(AHIRFORIMAGESRCS)
+	cat $^ > $@
+
+GHDLLINKFILES	=	Utility_Package Vhpi_Package LogUtilitiesGhdl
+GHDLLINKSRCS	=	$(call f_prefsuf,$(VHPIDIR),.vhdl,$(GHDLLINKFILES))
+$(VHDLRELEASEDIR)/GhdlLink.vhdl:	$(GHDLLINKSRCS)
+	cat $^ > $@
+
+MODELSIMLINKFILES	=	Utility_Package Modelsim_FLI_Foreign LogUtilitiesModelsim
+MODELSIMLINKSRCS	=	$(call f_prefsuf,$(VHPIDIR),$(MODELSIMLINKFILES))
+$(VHDLRELEASEDIR)/ModelsimLink.vhdl:	$(MODELSIMLINKSRCS)
+	cat $^ > $@
+
+AHIRIEEEFILES	=	math_utility_pkg.vhd fixed_float_types_c.vhdl fixed_pkg_c.vhd float_pkg_c.vhd
+AHIRIEEESRCS	=	$(addprefix $(AHIRIEEEDIR)/,$(AHIRIEEEFILES))
+$(VHDLRELEASEDIR)/aHiR_ieee_proposed.vhdl:	$(AHIRIEEESRCS)
+	cat $^ > $@
+
+AHIR_XL_PKGV2FILES		=	GlobalConstants Types Utilities Subprograms BaseComponents Components FloatOperatorPackage OperatorPackage mem_component_pack mem_function_pack memory_subsystem_package merge_functions functionLibraryComponents ApIntComponents
+MEMSUBSYSCOMPS_FORAHIR	=	common base_bank strictly_ordered unordered
+OPERATORCOMPS_FORAHIR	=	base ieee754 experimental glue level_core functionLibrary ap_int
+AHIR_XL_COMMONSRCS		=	$(f_prefsuf,$(PKGSV2DIR),.vhd,$(AHIR_XL_PKGV2FILES)) \
+	$(foreach c,$(MEMSUBSYSCOMPS_FORAHIR),$(wildcard $(MEMSUBSYSDIR)/$(c)/*.vhd)) \
+	$(wildcard $(CPATHDIR)/*.vhdl) \
+	$(foreach c,$(OPERATORCOMPS_FORAHIR),$(wildcard $(OPERATORSDIR)/$(c)/*.vhd)) \
+	$(wildcard $(CLKGATINGDIR)/*__clock_gate.vhdl)
+
+AHIRSRCS	=	$(AHIR_XL_COMMONSRCS) $(CLKGATINGDIR)/clock_gater.vhdl
+$(VHDLRELEASEDIR)/ahir.vhdl:	$(AHIRSRCS)
+	cat $^ > $@
+
+AHIRXLSRCS	=	$(AHIR_XL_COMMONSRCS) $(CLKGATINGDIR)/clock_gater_xilinx.vhdl
+$(VHDLRELEASEDIR)/ahirXilinx.vhdl:	$(AHIRSRCS)
 	cat $^ > $@
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -241,7 +279,7 @@ install: all
 	$(INSTALL) -m 644 $(INSTSHRFILES) $(DESTDIR)$(INSTSHRDIR)
 	$(INSTALL) -m 644 $(INSTVHDFILES) $(DESTDIR)$(INSTVHDDIR)
 
-clean: clean-bins clean-libs clean-objs clean-gensrcs
+clean: clean-bins clean-libs clean-objs clean-gensrcs clean-vhdl
 
 clean-bins:
 	rm -f $(BINS)
@@ -251,6 +289,8 @@ clean-gensrcs:
 	rm -f $(GENSRCS)
 clean-objs:
 	rm -f $(OBJS) $(DFILES)
+clean-vhdl:
+	rm -f $(INSTVHDFILES)
 
 $(foreach p, $(PROJECTS), $(eval $(call PROJRULES,$(p))))
 
