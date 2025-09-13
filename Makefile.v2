@@ -10,11 +10,14 @@
 
 # Dependencies: boost, antlr2, llvm (once llvm2aa is merged)
 
-CXXFLAGS+=  -I/usr/pkg/include -MMD -MP --std=c++17
+PREFIX	=	/usr/pkg
+
+CXXFLAGS+=  -I$(PREFIX)/include -MMD -MP --std=c++17
 ANTLR	=	antlr
 AR		=	ar
 ARFLAGS	=	rcs
-LDFLAGS	+=	-L/usr/pkg/lib -lantlr -lboost_filesystem -Wl,-rpath,/usr/pkg/lib
+LDFLAGS	+=	-L$(PREFIX)/lib -lantlr -lboost_filesystem -Wl,-rpath,$(PREFIX)/lib
+SOFLAGS	+=	-shared
 
 # LLVM2AA will be built from a separate git repo. Eventually it will be merged back here.
 PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION BGLWRAP #LLVM2AA
@@ -56,7 +59,7 @@ VERSION_DIR	=	version
 VERSION_ILIBS=	AhirVersion
 
 CTESTBENCH_DIR	=	CtestBench
-CTESTBENCH_LIBS	=	SockPipes SocketLibPipeHandler Vhpi
+#CTESTBENCH_LIBS	=	SockPipes SocketLibPipeHandler Vhpi
 
 PIPEHANDLER_DIR	=	pipeHandler
 PIPEHANDLER_LIBS=	PipeHandler
@@ -78,6 +81,7 @@ BGLWRAP_DIR=	BGLWrap
 
 
 BINS	=	$(foreach p,$(PROJECTS), $(addprefix $($(p)_DIR)/bin/, $($(p)_BINS)))
+LIBS	=	$(foreach p,$(PROJECTS), $(addsuffix .so,$(addprefix $($(p)_DIR)/lib/lib, $($(p)_LIBS))))
 ILIBS	=	$(foreach p,$(PROJECTS), $(addsuffix .a,$(addprefix $($(p)_DIR)/lib/lib, $($(p)_ILIBS))))
 INCDIRS	=	$(foreach p,$(PROJECTS), $($(p)_DIR)/include) $(foreach p,$(PROJECTS),$(foreach g,$(p)_GRAM,$($(p)_DIR)/src))
 CXXFLAGS+=	$(addprefix -I,$(INCDIRS))
@@ -102,6 +106,10 @@ $(if $(filter-out 1,$(words $($(1)_ILIBS))),\
 	$(sort $(wildcard $($(1)_DIR)/src/*.cpp) $(filter %.cpp,$(call f_ANTLROPS,$(1)))))
 endef
 
+#define f_LIBSRCS
+$(wildcard $($(1)_DIR)/src/*.c)
+#endef
+
 define f_BINSRCS
 $(if $($(2)_SRCS),\
 	$($(2)_SRCS),\
@@ -112,13 +120,17 @@ define f_SRC2O
 $(subst .c,.o,$(subst .cpp,.o,$(1)))
 endef
 
-define f_ALLSRCS
-endef
-
-define LIBRULES
+define ILIBRULES
 $($(1)_DIR)/lib/lib$(2).a: $(call f_SRC2O, $(call f_ILIBSRCS,$(1),$(2)))
 	mkdir -p $($(1)_DIR)/lib && \
 	$(AR) $(ARFLAGS) $($(1)_DIR)/lib/lib$(2).a $(call f_SRC2O, $(call f_ILIBSRCS,$(1),$(2)))
+
+endef
+
+define LIBRULES
+$($(1)_DIR)/lib/lib$(2).so: $(call f_SRC2O, $(call f_LIBSRCS,$(1),$(2)))
+	mkdir -p $($(1)_DIR)/lib && \
+	$(CXX) $(SOFLAGS) $(LDFLAGS) $(call f_SRC2O, $(call f_LIBSRCS,$(1),$(2))) -o $($(1)_DIR)/lib/lib$(2).so
 
 endef
 
@@ -134,14 +146,16 @@ define PROJRULES
 $(call f_ANTLROPS,$(1)) &: $(call f_ANTLRINP,$(1))
 	$(ANTLR) -o $($(1)_DIR)/src $(call f_ANTLRINP,$(1))
 
-$(foreach l,$($(1)_ILIBS),$(call LIBRULES,$(1),$(l)))
+$(foreach l,$($(1)_ILIBS),$(call ILIBRULES,$(1),$(l)))
+
+$(foreach l,$($(1)_LIBS),$(call LIBRULES,$(1),$(l)))
 
 $(foreach b,$($(1)_BINS),$(call BINRULES,$(1),$(b)))
 
 endef
 
 
-all: $(BINS)
+all: $(BINS) $(LIBS)
 
 
 BINOBJS=	$(foreach p,$(PROJECTS),$(foreach b,$($(p)_BINS),$(call f_SRC2O,$(call f_BINSRCS,$(p),$(b)))))
@@ -151,11 +165,11 @@ DFILES=		$(BINOBJS:.o=.d) $(LIBOBJS:.o=.d)
 -include $(DFILES)
 
 clean:
-	rm -f $(BINS) $(ILIBS) $(BINOBJS) $(LIBOBJS) $(GENSRCS) $(DFILES)
+	rm -f $(BINS) $(LIBS) $(ILIBS) $(BINOBJS) $(LIBOBJS) $(GENSRCS) $(DFILES)
 clean-bins:
 	rm -f $(BINS)
 clean-libs:
-	rm -f $(ILIBS)
+	rm -f $(ILIBS) $(LIBS)
 clean-gensrcs:
 	rm -f $(GENSRCS)
 clean-objs:
