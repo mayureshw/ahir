@@ -1135,7 +1135,7 @@ string vcSystem::Get_Pipe_Aggregate_Section(string pipe_id,
 	assert(p != NULL);
 
 	p->Get_Pipe_Aggregate_Section(pid,hindex,lindex);
-
+    return "Unexpected end of vcSystem::Get_Pipe_Aggregate_Section";
 }
 
 

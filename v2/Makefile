@@ -25,7 +25,7 @@ INSTINCDIR	=	$(PREFIX)/include
 INSTSHRDIR	=	$(PREFIX)/share/ahir
 INSTVHDDIR	=	$(PREFIX)/share/ahir/vhdl
 
-CFLAGS	+=  -I$(PREFIX)/include -MMD -MP -fPIC
+CFLAGS	+=  -I$(PREFIX)/include -MMD -MP -fPIC -Werror=return-type -O3
 CXXFLAGS+=	$(CFLAGS) --std=c++17
 ANTLR	=	antlr
 AR		=	ar
