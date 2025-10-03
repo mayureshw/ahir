@@ -8,8 +8,6 @@
 # ILIBS are .a, not to be installed, consumed for build (to be confirmed)
 # .so exist, but have to confirm whether they are to be installed
 
-# Dependencies: boost, antlr2, llvm (once llvm2aa is merged)
-
 OS  =   $(shell uname -s)
 ifeq ($(OS),NetBSD)
 PREFIX	?=	/usr/pkg
@@ -30,13 +28,12 @@ CXXFLAGS+=	$(CFLAGS) --std=c++17
 ANTLR	=	antlr
 AR		=	ar
 ARFLAGS	=	rcs
-LDFLAGS	+=	-L$(PREFIX)/lib -lantlr -lboost_filesystem -Wl,-rpath,$(PREFIX)/lib
+LDFLAGS	+=	-L$(PREFIX)/lib -lantlr -lboost_filesystem -lLLVM -Wl,-rpath,$(PREFIX)/lib
 SOFLAGS	+=	-shared
 
 INSTSHRFILES	=	../LICENSE ../CONTRIBUTORS
 
-# LLVM2AA will be built from a separate git repo. Eventually it will be merged back here.
-PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION #LLVM2AA
+PROJECTS	=	AHIRASM HIERSYS LIBAHIR BITVECS VALUE FNLIB IOLIB VERSION LLVM2AA
 PROJECTS	+=	PIPEHANDLER RTL2AAMATCHER CTESTBENCH
 PROJECTS	+=	BGLWRAP PTHREADUTILS
 
@@ -56,9 +53,9 @@ LIBAHIR_ILIBS=	VC
 LIBAHIR_GRAM=	vc
 vcParse_SRCS=	$(LIBAHIR_DIR)/util/vcParseMain.cpp
 
-#LLVM2AA_DIR	=	llvmbc2Aa
-#LLVM2AA_BINS=	llvm2aa
-#llvm2aa_SRCS=	$(wildcard $(LLVM2AA_DIR)/src/*.cpp)
+LLVM2AA_DIR	=	AaGeneration
+LLVM2AA_BINS=	llvm2aa
+llvm2aa_SRCS=	$(wildcard $(LLVM2AA_DIR)/src/*.cpp)
 
 BITVECS_DIR	=	BitVectors
 BITVECS_ILIBS=	BitVectors
